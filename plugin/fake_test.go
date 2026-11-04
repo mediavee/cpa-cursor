@@ -331,6 +331,8 @@ type fakeHost struct {
 	closedCh map[string]chan struct{}
 	// emitErr makes host.stream.emit fail, as it does once the client left.
 	emitErr atomic.Pointer[error]
+	// emitPanic makes host.stream.emit panic, to exercise recovery on the stream goroutine.
+	emitPanic atomic.Bool
 }
 
 func newFakeHost() *fakeHost {
@@ -361,6 +363,9 @@ func (h *fakeHost) call(method string, payload any) (json.RawMessage, error) {
 		h.logs = append(h.logs, l.Level+" "+l.Message)
 		h.mu.Unlock()
 	case pluginabi.MethodHostStreamEmit:
+		if h.emitPanic.Load() {
+			panic("injected emit panic")
+		}
 		if e := h.emitErr.Load(); e != nil {
 			return nil, *e
 		}
