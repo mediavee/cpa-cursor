@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package aiserver.v1;
+
+
+message FilesyncUpdateWithModelVersion {
+  int32 model_version = 1;
+  string relative_workspace_path = 2;
+  repeated .aiserver.v1.SingleUpdateRequest updates = 3;
+  int32 expected_file_length = 4;
+}
+message SingleUpdateRequest {
+  int32 start_position = 1;
+  int32 end_position = 2;
+  int32 change_length = 3;
+  string replaced_string = 4;
+  bytes /* unresolved */ range = 5;
+}

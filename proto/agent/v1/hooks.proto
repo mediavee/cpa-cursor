@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package agent.v1;
+
+import "agent/v1/requested_model.proto";
+import "google/protobuf/struct.proto";
+
+message AfterAgentResponseRequestQuery {
+  string text = 1;
+  optional string conversation_id = 2;
+  optional string generation_id = 3;
+  optional string model = 4;
+  optional string model_id = 5;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 6;
+  optional int64 input_tokens = 7;
+  optional int64 output_tokens = 8;
+  optional int64 cache_read_tokens = 9;
+  optional int64 cache_write_tokens = 10;
+}
+message AfterAgentResponseRequestResponse {
+}
+message AfterAgentThoughtRequestQuery {
+  string text = 1;
+  optional int64 duration_ms = 2;
+  optional string conversation_id = 3;
+  optional string generation_id = 4;
+  optional string model = 5;
+  optional string model_id = 6;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 7;
+}
+message AfterAgentThoughtRequestResponse {
+}
+message BeforeSubmitPromptAttachment {
+  string type = 1;
+  string file_path = 2;
+}
+message BeforeSubmitPromptRequestQuery {
+  string prompt = 1;
+  repeated .agent.v1.BeforeSubmitPromptAttachment attachments = 2;
+  optional string composer_mode = 3;
+  optional string conversation_id = 4;
+  optional string generation_id = 5;
+  optional string model = 6;
+  optional string model_id = 7;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 8;
+}
+message BeforeSubmitPromptRequestResponse {
+  optional bool continue = 1;
+  optional string user_message = 2;
+  optional string additional_context = 3;
+}
+message PostToolUseFailureRequestQuery {
+  string tool_name = 1;
+  .google.protobuf.Struct tool_input = 2;
+  string error_message = 3;
+  string failure_type = 4;
+  int64 duration_ms = 5;
+  string tool_use_id = 6;
+  bool is_interrupt = 7;
+  optional string conversation_id = 8;
+  optional string generation_id = 9;
+  optional string model = 10;
+  optional string model_id = 11;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 12;
+  optional string parent_tool_call_id = 13;
+}
+message PostToolUseFailureRequestResponse {
+  optional string additional_context = 1;
+}
+message PostToolUseRequestQuery {
+  string tool_name = 1;
+  .google.protobuf.Struct tool_input = 2;
+  string tool_output = 3;
+  int64 duration_ms = 4;
+  string tool_use_id = 5;
+  optional string cwd = 6;
+  optional string conversation_id = 7;
+  optional string generation_id = 8;
+  optional string model = 9;
+  optional string model_id = 10;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 11;
+  optional string parent_tool_call_id = 12;
+}
+message PostToolUseRequestResponse {
+  optional string additional_context = 1;
+}
+message PreCompactRequestQuery {
+  string trigger = 1;
+  double context_usage_percent = 2;
+  int64 context_tokens = 3;
+  int64 context_window_size = 4;
+  int32 message_count = 5;
+  int32 messages_to_compact = 6;
+  bool is_first_compaction = 7;
+  optional string conversation_id = 8;
+  optional string generation_id = 9;
+  optional string model = 10;
+  optional string model_id = 11;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 12;
+}
+message PreCompactRequestResponse {
+  optional string user_message = 1;
+}
+message PreToolUseRequestQuery {
+  string tool_name = 1;
+  .google.protobuf.Struct tool_input = 2;
+  string tool_use_id = 3;
+  optional string cwd = 4;
+  optional string conversation_id = 5;
+  optional string generation_id = 6;
+  optional string model = 7;
+  optional string model_id = 8;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 9;
+  optional string parent_tool_call_id = 10;
+}
+message PreToolUseRequestResponse {
+  optional string permission = 1;
+  optional string user_message = 2;
+  optional string agent_message = 3;
+  optional string updated_input = 4;
+  optional string additional_context = 5;
+}
+message StopRequestQuery {
+  string status = 1;
+  int32 loop_count = 2;
+  optional string conversation_id = 3;
+  optional string generation_id = 4;
+  optional string model = 5;
+  optional string model_id = 6;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 7;
+  optional int64 input_tokens = 8;
+  optional int64 output_tokens = 9;
+  optional int64 cache_read_tokens = 10;
+  optional int64 cache_write_tokens = 11;
+}
+message StopRequestResponse {
+  optional string followup_message = 1;
+}
+message SubagentStartRequestQuery {
+  string subagent_id = 1;
+  string subagent_type = 2;
+  string task = 3;
+  string parent_conversation_id = 4;
+  optional string tool_call_id = 5;
+  optional string subagent_model = 6;
+  bool is_parallel_worker = 7;
+  optional string git_branch = 8;
+  optional string conversation_id = 9;
+  optional string generation_id = 10;
+  optional string model = 11;
+  optional string model_id = 12;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 13;
+}
+message SubagentStartRequestResponse {
+  optional string permission = 1;
+  optional string user_message = 2;
+  optional string additional_context = 3;
+}
+message SubagentStopRequestQuery {
+  string subagent_id = 1;
+  string subagent_type = 2;
+  string status = 3;
+  int64 duration_ms = 4;
+  optional string summary = 5;
+  string parent_conversation_id = 6;
+  int32 message_count = 7;
+  int32 tool_call_count = 8;
+  optional string error_message = 9;
+  repeated string modified_files = 10;
+  optional string git_branch = 11;
+  optional string conversation_id = 12;
+  optional string generation_id = 13;
+  optional string model = 14;
+  int32 loop_count = 15;
+  optional string task = 16;
+  optional string description = 17;
+  optional string model_id = 18;
+  repeated .agent.v1.RequestedModel.ModelParameterValue model_params = 19;
+  optional string child_conversation_id = 20;
+}
+message SubagentStopRequestResponse {
+  optional string followup_message = 1;
+  optional string additional_context = 2;
+}

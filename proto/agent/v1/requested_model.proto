@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package agent.v1;
+
+
+message ApiKeyCredentials {
+  string api_key = 1;
+  optional string base_url = 2;
+}
+message AzureCredentials {
+  string api_key = 1;
+  string base_url = 2;
+  string deployment = 3;
+}
+message BedrockCredentials {
+  string access_key = 1;
+  string secret_key = 2;
+  string region = 3;
+  optional string session_token = 4;
+}
+message RequestedModel {
+  string model_id = 1;
+  bool max_mode = 2;
+  repeated .agent.v1.RequestedModel.ModelParameterValue parameters = 3;
+  bool built_in_model = 7;
+  oneof credentials {
+    .agent.v1.ApiKeyCredentials api_key_credentials = 4;
+    .agent.v1.AzureCredentials azure_credentials = 5;
+    .agent.v1.BedrockCredentials bedrock_credentials = 6;
+  }
+  message ModelParameterValue {
+    string id = 1;
+    string value = 2;
+  }
+}

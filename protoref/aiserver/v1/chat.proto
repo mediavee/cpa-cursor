@@ -1,0 +1,608 @@
+syntax = "proto3";
+
+package aiserver.v1;
+
+import "agent/v1/agent.proto";
+import "agent/v1/request_context_exec.proto";
+import "agent/v1/selected_context.proto";
+import "aiserver/v1/docs.proto";
+import "aiserver/v1/tools.proto";
+import "aiserver/v1/utils.proto";
+
+message AiWebSearchResult {
+  string content = 1;
+  string title = 2;
+}
+enum ChunkType {
+  CHUNK_TYPE_UNSPECIFIED = 0;
+  CHUNK_TYPE_CODEBASE = 1;
+  CHUNK_TYPE_LONG_FILE = 2;
+  CHUNK_TYPE_DOCS = 3;
+}
+message Commit {
+  string sha = 1;
+  string message = 2;
+  string description = 3;
+  repeated .aiserver.v1.FileDiff diff = 4;
+  string author = 5;
+  string date = 6;
+}
+message ComposerFileDiff {
+  repeated .aiserver.v1.ComposerFileDiff.ChunkDiff chunks = 1;
+  .aiserver.v1.ComposerFileDiff.Editor editor = 2;
+  bool hit_timeout = 3;
+  message ChunkDiff {
+    string diff_string = 1;
+    int32 old_start = 2;
+    int32 new_start = 3;
+    int32 old_lines = 4;
+    int32 new_lines = 5;
+    int32 lines_removed = 6;
+    int32 lines_added = 7;
+  }
+  enum Editor {
+    EDITOR_UNSPECIFIED = 0;
+    EDITOR_AI = 1;
+    EDITOR_HUMAN = 2;
+  }
+}
+message ComposerFileDiffHistory {
+  string file_name = 1;
+  repeated string diff_history = 2;
+  repeated double diff_history_timestamps = 3;
+}
+message ContextPiece {
+  string relative_workspace_path = 1;
+  string content = 2;
+  float score = 3;
+}
+message ContextRerankingCandidateFile {
+  string file_name = 1;
+  string file_content = 2;
+}
+message ContextToRank {
+  string relative_workspace_path = 1;
+  string contents = 2;
+  optional .aiserver.v1.LineRange line_range = 3;
+  optional .aiserver.v1.CodeBlock code_block = 4;
+}
+message ContextWindowStatus {
+  int32 percentage_remaining = 1;
+  optional int32 tokens_used = 2;
+  optional int32 token_limit = 3;
+  optional float percentage_remaining_float = 4;
+}
+message ConversationMessage {
+  string text = 1;
+  .aiserver.v1.ConversationMessage.MessageType type = 2;
+  repeated .aiserver.v1.ConversationMessage.CodeChunk attached_code_chunks = 3;
+  repeated .aiserver.v1.CodeBlock codebase_context_chunks = 4;
+  repeated .aiserver.v1.Commit commits = 5;
+  repeated .aiserver.v1.PullRequest pull_requests = 6;
+  repeated .aiserver.v1.GitDiff git_diffs = 7;
+  repeated .aiserver.v1.SimpleFileDiff assistant_suggested_diffs = 8;
+  repeated .aiserver.v1.InterpreterResult interpreter_results = 9;
+  repeated .aiserver.v1.ImageProto images = 10;
+  repeated string attached_folders = 11;
+  repeated .aiserver.v1.ConversationMessage.ApproximateLintError approximate_lint_errors = 12;
+  string bubble_id = 13;
+  optional string server_bubble_id = 32;
+  repeated .aiserver.v1.FolderInfo attached_folders_new = 14;
+  repeated .aiserver.v1.ConversationMessage.Lints lints = 15;
+  repeated .aiserver.v1.UserResponseToSuggestedCodeBlock user_responses_to_suggested_code_blocks = 16;
+  repeated string relevant_files = 17;
+  repeated .aiserver.v1.ConversationMessage.ToolResult tool_results = 18;
+  repeated .aiserver.v1.ConversationMessage.NotepadContext notepads = 19;
+  optional bool is_capability_iteration = 20;
+  repeated bytes /* unresolved */ capabilities = 21;
+  repeated .aiserver.v1.ConversationMessage.EditTrailContext edit_trail_contexts = 22;
+  repeated .aiserver.v1.SuggestedCodeBlock suggested_code_blocks = 23;
+  repeated .aiserver.v1.RedDiff diffs_for_compressing_files = 24;
+  repeated .aiserver.v1.LinterErrorsWithoutFileContents multi_file_linter_errors = 25;
+  repeated .aiserver.v1.DiffHistoryData diff_histories = 26;
+  repeated .aiserver.v1.ConversationMessage.CodeChunk recently_viewed_files = 27;
+  repeated .aiserver.v1.ConversationMessage.RecentLocation recent_locations_history = 28;
+  bool is_agentic = 29;
+  repeated .aiserver.v1.ComposerFileDiffHistory file_diff_trajectories = 30;
+  optional .aiserver.v1.ConversationSummary conversation_summary = 31;
+  bool existed_subsequent_terminal_command = 33;
+  bool existed_previous_terminal_command = 34;
+  repeated .aiserver.v1.DocsReference docs_references = 35;
+  repeated .aiserver.v1.WebReference web_references = 36;
+  repeated .aiserver.v1.AiWebSearchResult ai_web_search_results = 75;
+  optional .aiserver.v1.ViewableGitContext git_context = 37;
+  repeated .aiserver.v1.ListDirResult attached_folders_list_dir_results = 38;
+  optional .aiserver.v1.ConversationSummary cached_conversation_summary = 39;
+  repeated .aiserver.v1.ConversationMessage.HumanChange human_changes = 40;
+  bool attached_human_changes = 41;
+  repeated .aiserver.v1.ConversationMessage.ComposerContext summarized_composers = 42;
+  repeated .aiserver.v1.CursorRule cursor_rules = 43;
+  repeated .aiserver.v1.ContextPiece context_pieces = 44;
+  optional .aiserver.v1.ConversationMessage.Thinking thinking = 45;
+  repeated .aiserver.v1.ConversationMessage.Thinking all_thinking_blocks = 46;
+  optional .aiserver.v1.ConversationMessage.ThinkingStyle thinking_style = 85;
+  optional .aiserver.v1.StreamUnifiedChatRequest.UnifiedMode unified_mode = 47;
+  optional .agent.v1.AgentMode agent_mode = 98;
+  repeated .aiserver.v1.ConversationMessage.DiffSinceLastApply diffs_since_last_apply = 48;
+  repeated .aiserver.v1.ConversationMessage.DeletedFile deleted_files = 49;
+  optional string usage_uuid = 50;
+  repeated .aiserver.v1.ClientSideToolV2 supported_tools = 51;
+  optional .aiserver.v1.CurrentFileLocationData current_file_location_data = 52;
+  optional bool edit_tool_supports_search_and_replace = 53;
+  optional string last_terminal_cwd = 54;
+  optional bool user_explicitly_asked_to_generate_cursor_rules = 55;
+  repeated .aiserver.v1.RCPLogEntry console_logs = 56;
+  optional string rich_text = 57;
+  repeated .aiserver.v1.ConversationMessage.KnowledgeItem knowledge_items = 58;
+  repeated .aiserver.v1.RCPUIElementPicked ui_element_picked = 59;
+  optional bool user_explicitly_asked_to_add_to_knowledge_base = 60;
+  repeated .aiserver.v1.ConversationMessage.DocumentationSelection documentation_selections = 61;
+  repeated .aiserver.v1.ComposerExternalLink external_links = 62;
+  optional bool use_web = 63;
+  repeated .aiserver.v1.ProjectLayout project_layouts = 64;
+  optional int32 thinking_duration_ms = 65;
+  optional int32 step_duration_ms = 88;
+  optional .aiserver.v1.SubagentReturnCall subagent_return = 66;
+  optional bool is_simple_looping_message = 67;
+  repeated bytes /* unresolved */ capability_contexts = 68;
+  optional string checkpoint_commit_hash = 69;
+  optional string git_status_raw = 70;
+  repeated .aiserver.v1.TodoItem todos = 71;
+  optional bool is_review_edits_followup = 72;
+  string request_id = 74;
+  optional .aiserver.v1.ConversationMessage.IdeEditorsState ide_editors_state = 73;
+  optional .aiserver.v1.ContextWindowStatus context_window_status = 76;
+  optional bool is_plan_execution = 77;
+  string created_at = 78;
+  .aiserver.v1.ModelInfo model_info = 79;
+  optional bool is_quick_search_query = 80;
+  optional .aiserver.v1.ConversationMessage.PlanUpdate plan_update = 81;
+  optional bool is_simulated_msg = 82;
+  optional .agent.v1.SimulatedMsgReason simulated_msg_reason = 95;
+  optional .aiserver.v1.ConversationMessage.SimulatedMessageMetadata simulated_message_metadata = 97;
+  repeated .aiserver.v1.ConversationMessage.McpDescriptor mcp_descriptors = 83;
+  optional string workspace_project_dir = 84;
+  repeated string workspace_uris = 87;
+  optional .agent.v1.DebugModeConfig debug_mode_config = 86;
+  optional bytes text_blob_id = 89;
+  optional bytes rich_text_blob_id = 90;
+  repeated .agent.v1.SelectedCursorCommand cursor_commands = 91;
+  bool cursor_commands_explicitly_set = 92;
+  repeated .agent.v1.SelectedPastChat past_chats = 93;
+  bool past_chats_explicitly_set = 94;
+  optional .agent.v1.TriggeringUserInfo triggering_user_info = 96;
+  optional bool turn_steer = 99;
+  optional string sent_by_agent_id = 100;
+  message ApproximateLintError {
+    string message = 1;
+    string value = 2;
+    int32 start_line = 3;
+    int32 end_line = 4;
+    int32 start_column = 5;
+    int32 end_column = 6;
+  }
+  message CodeChunk {
+    string relative_workspace_path = 1;
+    int32 start_line_number = 2;
+    repeated string lines = 3;
+    optional .aiserver.v1.ConversationMessage.CodeChunk.SummarizationStrategy summarization_strategy = 4;
+    string language_identifier = 5;
+    optional .aiserver.v1.ConversationMessage.CodeChunk.Intent intent = 6;
+    optional bool is_final_version = 7;
+    optional bool is_first_version = 8;
+    optional bool contents_are_missing = 9;
+    optional bool is_only_included_from_folder = 10;
+    optional .aiserver.v1.ConversationMessage.CodeChunk.CodeChunkGitContext code_chunk_git_context = 11;
+    message CodeChunkGitContext {
+      repeated .aiserver.v1.ConversationMessage.CodeChunk.CodeChunkGitContext.CodeChunkGitInfo git_info = 1;
+      message CodeChunkGitInfo {
+        string commit = 1;
+        string author = 2;
+        string date = 3;
+        string message = 4;
+      }
+    }
+    enum Intent {
+      INTENT_UNSPECIFIED = 0;
+      INTENT_COMPOSER_FILE = 1;
+      INTENT_COMPRESSED_COMPOSER_FILE = 2;
+      INTENT_RECENTLY_VIEWED_FILE = 3;
+      INTENT_OUTLINE = 4;
+      INTENT_MENTIONED_FILE = 5;
+      INTENT_CODE_SELECTION = 6;
+      INTENT_AI_EDITED_FILE = 7;
+      INTENT_VISIBLE_FILE = 8;
+      INTENT_TERMINAL_SELECTION = 9;
+    }
+    enum SummarizationStrategy {
+      SUMMARIZATION_STRATEGY_NONE_UNSPECIFIED = 0;
+      SUMMARIZATION_STRATEGY_SUMMARIZED = 1;
+      SUMMARIZATION_STRATEGY_EMBEDDED = 2;
+    }
+  }
+  message ComposerContext {
+    string name = 1;
+    .aiserver.v1.ConversationSummary conversation_summary = 2;
+  }
+  message DeletedFile {
+    string relative_workspace_path = 1;
+  }
+  message DiffSinceLastApply {
+    string relative_workspace_path = 1;
+    optional .aiserver.v1.EditFileResult.FileDiff diff = 2;
+    optional bool is_accepted = 4;
+    optional bool is_rejected = 5;
+    optional int32 last_apply_chained_from_n_human_messages_ago = 6;
+  }
+  message DocumentationSelection {
+    string doc_id = 1;
+    string name = 2;
+  }
+  message EditLocation {
+    string relative_workspace_path = 1;
+    .aiserver.v1.SimplestRange range = 3;
+    .aiserver.v1.SimplestRange initial_range = 4;
+    string context_lines = 5;
+    string text = 6;
+    .aiserver.v1.SimplestRange text_range = 7;
+  }
+  message EditTrailContext {
+    string unique_id = 1;
+    repeated .aiserver.v1.ConversationMessage.EditLocation edit_trail_sorted = 2;
+  }
+  message HumanChange {
+    string relative_workspace_path = 1;
+    repeated .aiserver.v1.ConversationMessage.RenderedDiff rendered_diffs = 2;
+  }
+  message IdeEditorsState {
+    bool is_pill_displayed = 1;
+    repeated string visible_file_paths = 2;
+    repeated string recently_viewed_file_paths = 3;
+    repeated .aiserver.v1.ConversationMessage.IdeEditorsState.File visible_files = 4;
+    repeated .aiserver.v1.ConversationMessage.IdeEditorsState.File recently_viewed_files = 5;
+    message File {
+      string relative_path = 1;
+      optional bool is_currently_focused = 2;
+      optional int32 current_line_number = 3;
+      optional string current_line_text = 4;
+      optional int32 line_count = 5;
+      optional string absolute_path = 6;
+    }
+  }
+  message KnowledgeItem {
+    string title = 1;
+    string knowledge = 2;
+    string knowledge_id = 3;
+    bool is_generated = 4;
+  }
+  message Lints {
+    .aiserver.v1.GetLintsForChangeResponse lints = 1;
+    string chat_codeblock_model_value = 2;
+  }
+  message McpDescriptor {
+    string folder_path = 1;
+    optional string server_name = 2;
+    repeated .aiserver.v1.ConversationMessage.McpDescriptor.Tool tools = 3;
+    optional string server_use_instructions = 4;
+    message Tool {
+      string tool_name = 1;
+      optional string description = 2;
+    }
+  }
+  enum MessageType {
+    MESSAGE_TYPE_UNSPECIFIED = 0;
+    MESSAGE_TYPE_HUMAN = 1;
+    MESSAGE_TYPE_AI = 2;
+  }
+  message NotepadContext {
+    string name = 1;
+    string text = 2;
+    repeated .aiserver.v1.ConversationMessage.CodeChunk attached_code_chunks = 3;
+    repeated string attached_folders = 4;
+    repeated .aiserver.v1.Commit commits = 5;
+    repeated .aiserver.v1.PullRequest pull_requests = 6;
+    repeated .aiserver.v1.GitDiff git_diffs = 7;
+    repeated .aiserver.v1.ImageProto images = 8;
+  }
+  message PlanUpdate {
+    string current_plan = 1;
+    bool is_first_time_seen = 2;
+  }
+  message RecentLocation {
+    string relative_workspace_path = 1;
+    int32 line_number = 2;
+  }
+  message RenderedDiff {
+    int32 start_line_number = 1;
+    int32 end_line_number_exclusive = 2;
+    repeated string before_context_lines = 3;
+    repeated string removed_lines = 4;
+    repeated string added_lines = 5;
+    repeated string after_context_lines = 6;
+  }
+  message SimulatedMessageMetadata {
+    optional string title = 1;
+    optional string task_id = 2;
+    optional string fsd_finding_action = 3;
+    optional string url = 4;
+    optional .agent.v1.SubscriptionSource subscription_source = 5;
+    optional .agent.v1.SubscriptionEventDisplay subscription_event_display = 6;
+  }
+  message Thinking {
+    string text = 1;
+    string signature = 2;
+    string redacted_thinking = 3;
+    bool is_last_thinking_chunk = 4;
+  }
+  enum ThinkingStyle {
+    THINKING_STYLE_UNSPECIFIED = 0;
+    THINKING_STYLE_DEFAULT = 1;
+    THINKING_STYLE_CODEX = 2;
+    THINKING_STYLE_GPT5 = 3;
+  }
+  message ToolResult {
+    string tool_call_id = 1;
+    string tool_name = 2;
+    uint32 tool_index = 3;
+    optional string model_call_id = 12;
+    string args = 4;
+    string raw_args = 5;
+    repeated .aiserver.v1.ConversationMessage.CodeChunk attached_code_chunks = 6;
+    optional string content = 7;
+    .aiserver.v1.ClientSideToolV2Result result = 8;
+    optional .aiserver.v1.ToolResultError error = 9;
+    repeated .aiserver.v1.ImageProto images = 10;
+    optional .aiserver.v1.ClientSideToolV2Call tool_call = 11;
+    optional uint64 started_at_ms = 13;
+    optional uint64 completed_at_ms = 14;
+  }
+}
+message ConversationSummary {
+  string summary = 1;
+  string truncation_last_bubble_id_inclusive = 2;
+  string client_should_start_sending_from_inclusive_bubble_id = 3;
+  string previous_conversation_summary_bubble_id = 4;
+  bool includes_tool_results = 5;
+  string strategy = 6;
+}
+message CurrentFileLocationData {
+  string relative_workspace_path = 1;
+  int32 line_number = 2;
+  string text = 3;
+}
+message DeepSearchSubagentReturnValue {
+  repeated .aiserver.v1.DeepSearchSubagentReturnValue.ContextItem context_items = 1;
+  message ContextItem {
+    string file = 1;
+    optional .aiserver.v1.LineRange line_range = 2;
+    string explanation = 3;
+  }
+}
+message DiffFile {
+  string file_details = 1;
+  string file_name = 2;
+}
+message DiffHistoryData {
+  string relative_workspace_path = 1;
+  repeated .aiserver.v1.ComposerFileDiff diffs = 2;
+  double timestamp = 3;
+  string unique_id = 4;
+  .aiserver.v1.ComposerFileDiff start_to_end_diff = 5;
+}
+message DocsReference {
+  string title = 1;
+  string url = 2;
+  string chunk = 3;
+  string name = 4;
+}
+message Document {
+  string content = 1;
+  string id = 2;
+}
+message DocumentIdsWithScores {
+  string document_id = 1;
+  float score = 2;
+}
+message DocumentationCitation {
+  repeated .aiserver.v1.DocumentationChunk chunks = 1;
+}
+message FileLink {
+  string display_name = 1;
+  string relative_workspace_path = 2;
+}
+message FixLintsSubagentReturnValue {
+}
+message FolderFileInfo {
+  string relative_path = 1;
+  string content = 2;
+  bool truncated = 3;
+  float score = 4;
+}
+message FolderInfo {
+  string relative_path = 1;
+  repeated .aiserver.v1.FolderFileInfo files = 2;
+}
+message GetLintsForChangeResponse {
+  repeated .aiserver.v1.GetLintsForChangeResponse.Lint lints = 1;
+  message Lint {
+    string message = 1;
+    string severity = 2;
+    string relative_workspace_path = 3;
+    int32 start_line_number_one_indexed = 4;
+    int32 start_column_one_indexed = 5;
+    int32 end_line_number_inclusive_one_indexed = 6;
+    int32 end_column_one_indexed = 7;
+    repeated .aiserver.v1.GetLintsForChangeResponse.Lint.QuickFix quick_fixes = 9;
+    message QuickFix {
+      string message = 1;
+      string kind = 2;
+      bool is_preferred = 3;
+      repeated .aiserver.v1.GetLintsForChangeResponse.Lint.QuickFix.Edit edits = 4;
+      message Edit {
+        string relative_workspace_path = 1;
+        string text = 2;
+        int32 start_line_number_one_indexed = 3;
+        int32 start_column_one_indexed = 4;
+        int32 end_line_number_inclusive_one_indexed = 5;
+        int32 end_column_one_indexed = 6;
+      }
+    }
+  }
+}
+message InterpreterResult {
+  string output = 1;
+  bool success = 2;
+}
+message ProjectLayout {
+  string root_path = 1;
+  .aiserver.v1.ProjectLayoutDirectoryContent content = 2;
+  optional .aiserver.v1.ListDirV2Result list_dir_v2_result = 3;
+}
+message ProjectLayoutDirectory {
+  string name = 1;
+  .aiserver.v1.ProjectLayoutDirectoryContent content = 2;
+}
+message ProjectLayoutDirectoryContent {
+  repeated .aiserver.v1.ProjectLayoutDirectory directories = 1;
+  repeated .aiserver.v1.ProjectLayoutFile files = 2;
+  optional int32 total_files = 3;
+  optional int32 total_subfolders = 4;
+  repeated .aiserver.v1.ProjectLayoutFile hidden_files = 5;
+}
+message ProjectLayoutFile {
+  string name = 1;
+}
+message PullRequest {
+  string title = 1;
+  string body = 2;
+  repeated .aiserver.v1.FileDiff diff = 3;
+  int64 id = 4;
+  int64 number = 5;
+}
+message RankedContext {
+  .aiserver.v1.ContextToRank context = 1;
+  float score = 2;
+}
+message RedDiff {
+  string relative_workspace_path = 1;
+  repeated .aiserver.v1.SimplestRange red_ranges = 2;
+  repeated .aiserver.v1.SimplestRange red_ranges_reversed = 3;
+  string start_hash = 4;
+  string end_hash = 5;
+}
+message RerankDocumentsRequest {
+  string query = 1;
+  repeated .aiserver.v1.Document documents = 2;
+}
+message RerankDocumentsResponse {
+  repeated .aiserver.v1.DocumentIdsWithScores documents = 1;
+}
+message ServiceStatusUpdate {
+  string message = 1;
+  string codicon = 2;
+  optional bool allow_command_links_potentially_unsafe_please_only_use_for_handwritten_trusted_markdown = 3;
+  optional string action_to_run_on_status_update = 4;
+}
+message SimpleFileDiff {
+  string relative_workspace_path = 1;
+  repeated .aiserver.v1.SimpleFileDiff.Chunk chunks = 3;
+  message Chunk {
+    repeated string old_lines = 1;
+    repeated string new_lines = 2;
+    .aiserver.v1.LineRange old_range = 3;
+    .aiserver.v1.LineRange new_range = 4;
+  }
+}
+message SpecSubagentReturnValue {
+  string summary = 1;
+  repeated .aiserver.v1.StringReplacement string_replacements = 2;
+}
+message StatusUpdate {
+  string message = 1;
+  optional string metadata = 2;
+}
+message StatusUpdates {
+  repeated .aiserver.v1.StatusUpdate updates = 1;
+}
+// parent not present in the bundle; scope only
+message StreamUnifiedChatRequest {
+  enum UnifiedMode {
+    UNIFIED_MODE_UNSPECIFIED = 0;
+    UNIFIED_MODE_CHAT = 1;
+    UNIFIED_MODE_AGENT = 2;
+    UNIFIED_MODE_EDIT = 3;
+    UNIFIED_MODE_CUSTOM = 4;
+    UNIFIED_MODE_PLAN = 5;
+    UNIFIED_MODE_DEBUG = 6;
+  }
+}
+message StringReplacement {
+  string old_string = 1;
+  string new_string = 2;
+}
+message SubagentReturnCall {
+  .aiserver.v1.SubagentType subagent_type = 1;
+  oneof return_value {
+    .aiserver.v1.DeepSearchSubagentReturnValue deep_search_return_value = 2;
+    .aiserver.v1.FixLintsSubagentReturnValue fix_lints_return_value = 3;
+    .aiserver.v1.TaskSubagentReturnValue task_return_value = 4;
+    .aiserver.v1.SpecSubagentReturnValue spec_return_value = 5;
+  }
+}
+enum SubagentType {
+  SUBAGENT_TYPE_UNSPECIFIED = 0;
+  SUBAGENT_TYPE_DEEP_SEARCH = 1;
+  SUBAGENT_TYPE_FIX_LINTS = 2;
+  SUBAGENT_TYPE_TASK = 3;
+  SUBAGENT_TYPE_SPEC = 4;
+}
+message SuggestedCodeBlock {
+  string relative_workspace_path = 1;
+}
+message SymbolLink {
+  string symbol_name = 1;
+  string symbol_search_string = 2;
+  string relative_workspace_path = 3;
+  int32 rough_line_number = 4;
+}
+message TaskSubagentReturnValue {
+  string summary = 1;
+}
+message UserResponseToSuggestedCodeBlock {
+  .aiserver.v1.UserResponseToSuggestedCodeBlock.UserResponseType user_response_type = 1;
+  string file_path = 2;
+  optional .aiserver.v1.FileDiff user_modifications_to_suggested_code_blocks = 3;
+  enum UserResponseType {
+    USER_RESPONSE_TYPE_UNSPECIFIED = 0;
+    USER_RESPONSE_TYPE_ACCEPT = 1;
+    USER_RESPONSE_TYPE_REJECT = 2;
+    USER_RESPONSE_TYPE_MODIFY = 3;
+  }
+}
+message ViewableCommitProps {
+  string description = 1;
+  string message = 2;
+  repeated .aiserver.v1.DiffFile files = 3;
+}
+message ViewableDiffProps {
+  repeated .aiserver.v1.DiffFile files = 1;
+  string diff_preface = 2;
+}
+message ViewableGitContext {
+  optional .aiserver.v1.ViewableCommitProps commit_data = 1;
+  optional .aiserver.v1.ViewablePRProps pull_request_data = 2;
+  repeated .aiserver.v1.ViewableDiffProps diff_data = 3;
+}
+message ViewablePRProps {
+  string title = 1;
+  string body = 2;
+  repeated .aiserver.v1.DiffFile files = 3;
+}
+message WebCitation {
+  repeated .aiserver.v1.WebReference references = 1;
+}
+message WebReference {
+  string title = 2;
+  string url = 1;
+  string chunk = 3;
+}

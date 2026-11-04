@@ -1,0 +1,10 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/mediavee/cpa-cursor/internal/gen
+plugins:
+  - local: protoc-gen-go
+    out: internal/gen
+    opt: paths=source_relative
