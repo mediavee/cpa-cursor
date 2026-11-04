@@ -54,10 +54,11 @@ plugin:
 		docker run --rm --platform linux/$$arch \
 			-v "$(CURDIR)":/src -w /src \
 			-v cpa-cursor-gomod:/go/pkg/mod -v cpa-cursor-gocache-$$arch:/root/.cache/go-build \
-			-e CGO_ENABLED=1 -e GOFLAGS=-buildvcs=false \
+			-e CGO_ENABLED=1 -e GOFLAGS=-buildvcs=false -e OWNER=$$(id -u):$$(id -g) \
 			$(PLUGIN_IMAGE) \
-			go build -trimpath -buildmode=c-shared \
+			sh -c 'go build -trimpath -buildmode=c-shared \
 				-ldflags "-s -w -X github.com/mediavee/cpa-cursor/plugin.Version=$(VERSION)" \
-				-o bin/plugins/linux/$$arch/cursor.so ./cmd/plugin || exit 1; \
-		rm -f bin/plugins/linux/$$arch/cursor.h; \
+				-o bin/plugins/linux/'$$arch'/cursor.so ./cmd/plugin \
+				&& rm -f bin/plugins/linux/'$$arch'/cursor.h; \
+				status=$$?; chown -R "$$OWNER" bin; exit $$status' || exit 1; \
 	done
