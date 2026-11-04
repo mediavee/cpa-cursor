@@ -29,6 +29,10 @@ linters:
       # Live harness that calls the keychain and RoundTrip directly, like the spike did.
       - path: cmd/translate-live/
         linters: [bodyclose, noctx]
+      # x/net v0.60 (required by the CPA SDK) deprecates http2.Transport in favour of http.Transport with
+      # HTTP2 settings; the Run stream still needs the former until the client is migrated.
+      - text: "golang.org/x/net/http2"
+        linters: [staticcheck]
 
 formatters:
   enable:

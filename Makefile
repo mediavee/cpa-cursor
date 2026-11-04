@@ -1,5 +1,8 @@
 BUF := go run github.com/bufbuild/buf/cmd/buf@v1.47.2
 PROTOC_GEN_GO := google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.0
+PLUGIN_IMAGE ?= golang:1.26-bookworm
+PLUGIN_ARCHS ?= arm64 amd64
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 
 .PHONY: gen
@@ -10,11 +13,11 @@ gen:
 
 # check is the gate: CI runs exactly this.
 .PHONY: check
-check: fmt-check vet lint test gen-check build
+check: fmt-check vet lint test gen-check build plugin
 
 .PHONY: fmt-check
 fmt-check:
-	@out="$$(gofmt -l cmd internal)"; test -z "$$out" || { echo "gofmt needed:"; echo "$$out"; exit 1; }
+	@out="$$(gofmt -l cmd internal plugin)"; test -z "$$out" || { echo "gofmt needed:"; echo "$$out"; exit 1; }
 
 .PHONY: vet
 vet:
@@ -40,3 +43,22 @@ gen-check:
 .PHONY: build
 build:
 	go build ./...
+
+# plugin builds the CPA plugin for linux in the image CPA's own release uses (glibc, cgo). A c-shared
+# library must be built for its target by a native toolchain, so each architecture gets its own
+# container; the module cache is kept in a volume.
+.PHONY: plugin
+plugin:
+	@for arch in $(PLUGIN_ARCHS); do \
+		echo "plugin linux/$$arch"; \
+		docker run --rm --platform linux/$$arch \
+			-v "$(CURDIR)":/src -w /src \
+			-v cpa-cursor-gomod:/go/pkg/mod -v cpa-cursor-gocache-$$arch:/root/.cache/go-build \
+			-e CGO_ENABLED=1 -e GOFLAGS=-buildvcs=false -e OWNER=$$(id -u):$$(id -g) \
+			$(PLUGIN_IMAGE) \
+			sh -c 'go build -trimpath -buildmode=c-shared \
+				-ldflags "-s -w -X github.com/mediavee/cpa-cursor/plugin.Version=$(VERSION)" \
+				-o bin/plugins/linux/'$$arch'/cursor.so ./cmd/plugin \
+				&& rm -f bin/plugins/linux/'$$arch'/cursor.h; \
+				status=$$?; chown -R "$$OWNER" bin; exit $$status' || exit 1; \
+	done

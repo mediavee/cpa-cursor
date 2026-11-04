@@ -390,7 +390,10 @@ func (s *Session) writeLoop() {
 		select {
 		case frame := <-s.out:
 			if _, err := s.pw.Write(frame); err != nil {
-				s.finish(fmt.Errorf("cursor: write: %w", err))
+				// The transport closed the request body: the read side reports why.
+				if !errors.Is(err, io.ErrClosedPipe) {
+					s.finish(fmt.Errorf("cursor: write: %w", err))
+				}
 				return
 			}
 		case <-s.ctx.Done():

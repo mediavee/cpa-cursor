@@ -103,7 +103,7 @@ func (c *Client) agentURL() string {
 
 // request builds the Run request. The body stays open for the whole session.
 func (s *Session) request(token string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, s.c.agentURL()+"/agent.v1.AgentService/Run", body)
+	req, err := http.NewRequestWithContext(context.WithValue(s.ctx, dialOwnerKey{}, s.ctx), http.MethodPost, s.c.agentURL()+"/agent.v1.AgentService/Run", body)
 	if err != nil {
 		return nil, fmt.Errorf("cursor: build run request: %w", err)
 	}
@@ -130,6 +130,16 @@ func (s *Session) request(token string, body io.Reader) (*http.Request, error) {
 func (c *Client) dialTLS(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.dialTimeout)
 	defer cancel()
+	// The HTTP/2 pool may dial with a context cut off from the request's cancellation (net/http does,
+	// and so does the x/net wrapper over it), so the dial follows the session that started it instead.
+	// A session that ends while its dial is pending closes the socket; a request waiting for the same
+	// connection then fails with a retryable error rather than keeping the dial alive for it.
+	if owner, ok := ctx.Value(dialOwnerKey{}).(context.Context); ok {
+		var stop context.CancelCauseFunc
+		ctx, stop = context.WithCancelCause(ctx)
+		defer stop(nil)
+		defer context.AfterFunc(owner, func() { stop(context.Cause(owner)) })()
+	}
 	if c.tls != nil {
 		merged := c.tls.Clone()
 		merged.NextProtos = cfg.NextProtos
@@ -156,6 +166,9 @@ func (c *Client) dialTLS(ctx context.Context, network, addr string, cfg *tls.Con
 	}
 	return conn, nil
 }
+
+// dialOwnerKey carries, in a request's context, the context of the session whose dial it may start.
+type dialOwnerKey struct{}
 
 // dialViaProxy opens a CONNECT tunnel to addr through an HTTP proxy. The
 // socket is closed if ctx ends during the negotiation: reading the reply does
