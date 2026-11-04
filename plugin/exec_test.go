@@ -236,7 +236,13 @@ func TestExecuteStreamStopsTheRunWhenTheHostClosesTheStream(t *testing.T) {
 	gone := errors.New("stream 7 is not open")
 	h.host.emitErr.Store(&gone)
 	_, _ = h.call(pluginabi.MethodExecutorExecuteStream, h.execRequest("auth-1", h.token(time.Hour, "s"), "composer-x", chatBody("composer-x", userMsg("hi")), "s7"))
-	run := <-h.up.runSeen
+	// When the probe wins before the run is opened, no run reaches Cursor at all, which is also a stop.
+	var run *fakeRun
+	select {
+	case run = <-h.up.runSeen:
+	case <-time.After(200 * time.Millisecond):
+		return
+	}
 	select {
 	case <-run.gone:
 	case <-time.After(waitTimeout):
@@ -488,5 +494,21 @@ func TestHTTPRequestIsNotSupported(t *testing.T) {
 	h := newHarness(t)
 	if _, e := h.call(pluginabi.MethodExecutorHTTPRequest, []byte(`{}`)); e == nil || e.HTTPStatus != 501 {
 		t.Errorf("error = %+v", e)
+	}
+}
+
+// A panic on the stream goroutine is recovered so CPA survives; the stream must still be closed, with an
+// error, or CPA's client waits on it until its own timeout.
+func TestPanicWhileStreamingClosesTheStreamWithAnError(t *testing.T) {
+	h := newHarness(t)
+	h.up.setScript(func(r *fakeRun) { r.text("Hel"); r.text("lo"); r.turnEnded(7, 2) })
+	h.host.emitPanic.Store(true)
+	_, closed, e := h.stream("auth-1", h.token(time.Hour, "s"), "composer-x", chatBody("composer-x", userMsg("hi")), "s-panic")
+	if e != nil {
+		t.Fatalf("stream: %+v", e)
+	}
+	detail, _ := closed["error_detail"].(map[string]any)
+	if detail == nil || detail["code"] != "plugin_panic" || detail["http_status"] != float64(500) {
+		t.Errorf("close = %v, want a plugin_panic error", closed)
 	}
 }

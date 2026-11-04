@@ -3,7 +3,9 @@ package cursor
 import (
 	"errors"
 	"io"
+	"runtime/pprof"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,5 +236,34 @@ func TestParkNeedsAPendingCallAndRegistryCloseClosesRuns(t *testing.T) {
 	case <-fs.ctxDone:
 	case <-time.After(waitTimeout):
 		t.Fatal("Close left a parked run open")
+	}
+}
+
+// parkWatchers counts the goroutines that watch a parked session for its end.
+func parkWatchers() int {
+	var b strings.Builder
+	_ = pprof.Lookup("goroutine").WriteTo(&b, 1)
+	return strings.Count(b.String(), "(*Registry).Park.func")
+}
+
+// A run taken back from the registry stays open for its next tool step: the
+// watcher of that parking must not outlive it, or each step leaves one more.
+func TestTakeReleasesTheParkingWatcher(t *testing.T) {
+	up := newFakeUpstream(t)
+	reg := NewRegistry(RegistryConfig{Clock: newFakeClock()})
+	t.Cleanup(reg.Close)
+	before := parkWatchers()
+	s, _ := parkOne(t, up, reg, "c1")
+	if parkWatchers() != before+1 {
+		t.Fatalf("parking started %d watchers, want 1", parkWatchers()-before)
+	}
+	if _, ok := reg.Take([]string{"c1"}); !ok {
+		t.Fatal("the parked run was not taken")
+	}
+	eventually(t, "the watcher to stop while the run is still open", func() bool { return parkWatchers() == before })
+	select {
+	case <-s.Done():
+		t.Fatal("taking the run closed it")
+	default:
 	}
 }

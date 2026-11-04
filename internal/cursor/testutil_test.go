@@ -151,11 +151,13 @@ type clientFrame struct {
 
 // fakeStream is the server side of one Run stream.
 type fakeStream struct {
-	t       *testing.T
-	req     *http.Request
-	w       http.ResponseWriter
-	in      chan clientFrame
-	wmu     sync.Mutex
+	t   *testing.T
+	req *http.Request
+	w   http.ResponseWriter
+	in  chan clientFrame
+	wmu sync.Mutex
+	// done is set, under wmu, once the handler has returned: net/http forbids touching w after that.
+	done    bool
 	release chan struct{}
 	once    sync.Once
 	// ctxDone is closed when the request context ends, that is when the client closes the stream.
@@ -165,6 +167,9 @@ type fakeStream struct {
 func (f *fakeStream) writeFrame(flags byte, payload []byte) {
 	f.wmu.Lock()
 	defer f.wmu.Unlock()
+	if f.done {
+		return
+	}
 	hdr := make([]byte, 5)
 	hdr[0] = flags
 	binary.BigEndian.PutUint32(hdr[1:], uint32(len(payload)))
@@ -307,6 +312,11 @@ func (u *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/connect+proto")
 	w.WriteHeader(http.StatusOK)
 	w.(http.Flusher).Flush()
+	defer func() {
+		fs.wmu.Lock()
+		fs.done = true
+		fs.wmu.Unlock()
+	}()
 	u.streams <- fs
 	select {
 	case <-fs.release:

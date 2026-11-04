@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -294,13 +296,22 @@ func (p *Plugin) executeStream(raw []byte) (any, error) {
 	p.goSafe("execute_stream", func() {
 		defer cancel()
 		defer watch.stop()
-		p.pumpStream(ctx, req.StreamID, watch, r, first)
+		var once sync.Once
+		closeStream := func(e *pluginabi.Error) { once.Do(func() { p.closeStream(req.StreamID, e) }) }
+		defer func() {
+			// goSafe recovers the panic so CPA survives; the stream must still end, or CPA's client waits on it.
+			if v := recover(); v != nil {
+				closeStream(pluginabi.NewError("plugin_panic", fmt.Sprintf("cursor plugin panic while streaming: %v", v), 500))
+				panic(v)
+			}
+		}()
+		p.pumpStream(ctx, req.StreamID, watch, r, first, closeStream)
 	})
 	return map[string]any{"headers": http.Header{"Content-Type": {"text/event-stream"}}}, nil
 }
 
 // pumpStream sends the chunks of a run to CPA until the run ends, then closes the stream.
-func (p *Plugin) pumpStream(ctx context.Context, streamID string, watch *streamWatch, r *runner, chunks []translate.ChatChunk) {
+func (p *Plugin) pumpStream(ctx context.Context, streamID string, watch *streamWatch, r *runner, chunks []translate.ChatChunk, closeStream func(*pluginabi.Error)) {
 	emit := func(payload []byte) error { return watch.emit(payload) }
 	emitChunk := func(c translate.ChatChunk) error {
 		b, err := json.Marshal(c)
@@ -331,7 +342,7 @@ func (p *Plugin) pumpStream(ctx context.Context, streamID string, watch *streamW
 		if err != nil {
 			e := p.upstreamError(ctx, r.job.rt, r.job.token, err)
 			p.logf("warn", "stream failed after its first output: %s: %s", describe(e), e.Message)
-			p.closeStream(streamID, e)
+			closeStream(e)
 			return
 		}
 		if err := emitAll(cs); err != nil {
@@ -347,7 +358,7 @@ func (p *Plugin) pumpStream(ctx context.Context, streamID string, watch *streamW
 		gone(err)
 		return
 	}
-	p.closeStream(streamID, nil)
+	closeStream(nil)
 }
 
 // streamWatch emits to one CPA stream and notices when CPA stops reading it. An idle stream is

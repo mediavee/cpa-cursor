@@ -45,6 +45,8 @@ type parked struct {
 	s     *Session
 	ids   []string
 	timer Timer
+	// gone is closed when the parking leaves the registry, which ends its watcher.
+	gone chan struct{}
 }
 
 func NewRegistry(cfg RegistryConfig) *Registry {
@@ -70,7 +72,7 @@ func (r *Registry) Park(s *Session) error {
 	if len(ids) == 0 {
 		return ErrNothingPending
 	}
-	p := &parked{s: s, ids: ids}
+	p := &parked{s: s, ids: ids, gone: make(chan struct{})}
 
 	r.mu.Lock()
 	if r.closed {
@@ -95,8 +97,11 @@ func (r *Registry) Park(s *Session) error {
 		e.s.Close()
 	}
 	go func() {
-		<-s.Done()
-		r.expire(p)
+		select {
+		case <-s.Done():
+			r.expire(p)
+		case <-p.gone:
+		}
 	}()
 	return nil
 }
@@ -180,9 +185,12 @@ func (r *Registry) contains(p *parked) (int, bool) {
 }
 
 func (r *Registry) removeLocked(p *parked) {
-	if i, ok := r.contains(p); ok {
-		r.order = slices.Delete(r.order, i, i+1)
+	i, ok := r.contains(p)
+	if !ok {
+		return
 	}
+	r.order = slices.Delete(r.order, i, i+1)
+	close(p.gone)
 	for _, id := range p.ids {
 		if r.byCall[id] == p {
 			delete(r.byCall, id)
