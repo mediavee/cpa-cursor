@@ -1,6 +1,8 @@
 package cursor
 
 import (
+	"strings"
+
 	agentv1 "github.com/mediavee/cpa-cursor/internal/gen/agent/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -75,9 +77,20 @@ func (s *Session) handleExec(ex *agentv1.ExecServerMessage) {
 		s.send(throwMessage(id, "Unknown exec message variant", throwUnknownExec))
 		s.send(streamClose(id))
 	default:
-		s.send(throwMessage(id, "Tool not available in this client", throwToolUnavailable))
+		s.send(throwMessage(id, s.unavailableText(), throwToolUnavailable))
 		s.send(streamClose(id))
 	}
+}
+
+// unavailableText answers a built-in tool call. A bare refusal makes the model
+// give up on the task; naming the client's tools makes it switch to them.
+func (s *Session) unavailableText() string {
+	names := s.toolNames()
+	if len(names) == 0 {
+		return "Tool not available in this client, and the client offers no tools: answer without tools."
+	}
+	return "Tool not available in this client. Use the client's own tools instead (MCP server \"" +
+		mcpServerIdentifier + "\"): " + strings.Join(names, ", ") + "."
 }
 
 func (s *Session) requestContext() *agentv1.RequestContext {

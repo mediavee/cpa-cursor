@@ -638,3 +638,20 @@ func TestTruncatedStreamIsAnError(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTruncated", err)
 	}
 }
+
+// Cursor's model gives up on the task after a bare refusal of a built-in tool;
+// the refusal must name the client's tools so it switches to them.
+func TestBuiltInRefusalNamesTheClientTools(t *testing.T) {
+	up := newFakeUpstream(t)
+	tool := testTool("Read")
+	_, fs := startSession(t, up, SystemClock{}, RunParams{Tools: []*agentv1.McpToolDefinition{tool}})
+	fs.recv()
+
+	fs.send(execMsg(30, "read", func(m *agentv1.ExecServerMessage) {
+		m.Message = &agentv1.ExecServerMessage_ReadArgs{ReadArgs: &agentv1.ReadArgs{Path: "note.txt"}}
+	}), false)
+	th := fs.recvNonHeartbeat().msg.GetExecClientControlMessage().GetThrow()
+	if th.GetErrorCode() != "tool_unavailable" || !strings.Contains(th.GetError(), tool.GetName()) {
+		t.Fatalf("refusal %q (code %q) does not name the client tool %q", th.GetError(), th.GetErrorCode(), tool.GetName())
+	}
+}
