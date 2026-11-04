@@ -36,8 +36,10 @@ host. `VERSION=...` stamps the version CPA shows (default: `git describe`).
 
 ### Install
 
-Put the library where CPA looks for plugins, `<plugins.dir>/linux/<arch>/cursor.so` (the file name is the
-plugin id), and enable it in `config.yaml`. The block is opt-in: without `enabled: true` CPA never loads it.
+Put the library where CPA looks for plugins, `<plugins.dir>/linux/<arch>/cursor-v<version>.so` (the plugin id
+is the file name without its `-v<version>` suffix; a plain `cursor.so` works too), and enable it in
+`config.yaml`. To update without restarting CPA, add the new release under its own versioned name, remove the old
+file, then let CPA reload its config: CPA hot-reloads a plugin only when the file it finds changes name. The block is opt-in: without `enabled: true` CPA never loads it.
 
     plugins:
       enabled: true
