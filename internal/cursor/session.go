@@ -75,6 +75,9 @@ type RunParams struct {
 type execRef struct {
 	id     uint32
 	execID string
+	// handed is set when Next returned the call to the consumer. A call that
+	// arrives after that belongs to the next step.
+	handed bool
 }
 
 // Session is one open Run stream. Consume it with Next from a single
@@ -204,7 +207,20 @@ func (s *Session) Done() <-chan struct{} { return s.done }
 // clean end of run, or the terminal error: *Error for a Cursor error,
 // ErrStalled, ErrClosed, a context error or a transport error. Cancelling
 // ctx only abandons this call; it does not close the session.
-func (s *Session) Next(ctx context.Context) (Event, error) { return s.q.pop(ctx) }
+func (s *Session) Next(ctx context.Context) (Event, error) {
+	ev, err := s.q.pop(ctx)
+	if tc, ok := ev.(ToolCallsEvent); ok {
+		s.mu.Lock()
+		for _, a := range tc.Calls {
+			if ref, ok := s.pending[a.GetToolCallId()]; ok {
+				ref.handed = true
+				s.pending[a.GetToolCallId()] = ref
+			}
+		}
+		s.mu.Unlock()
+	}
+	return ev, err
+}
 
 // Close ends the session and its HTTP stream. It is idempotent.
 func (s *Session) Close() { s.finish(ErrClosed) }
@@ -235,13 +251,17 @@ func (s *Session) Unbind() {
 	}
 }
 
-// PendingToolCalls lists the tool_call_ids the server is waiting on.
+// PendingToolCalls lists the tool_call_ids that Next handed out and that are
+// not answered yet. A call that arrived after the last ToolCallsEvent was
+// popped is not listed: it comes with the next one.
 func (s *Session) PendingToolCalls() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ids := make([]string, 0, len(s.pending))
-	for id := range s.pending {
-		ids = append(ids, id)
+	for id, ref := range s.pending {
+		if ref.handed {
+			ids = append(ids, id)
+		}
 	}
 	slices.Sort(ids)
 	return ids

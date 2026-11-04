@@ -27,6 +27,8 @@ type Client struct {
 	tls   *tls.Config
 	// proxy picks the HTTP proxy for a request; http.ProxyFromEnvironment by default.
 	proxy func(*http.Request) (*url.URL, error)
+	// dialTimeout bounds one connection setup: TCP, proxy tunnel and TLS together.
+	dialTimeout time.Duration
 
 	h2    *http2.Transport
 	unary *http.Client
@@ -51,7 +53,7 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("cursor: invalid config: %w", err)
 	}
-	c := &Client{cfg: cfg, clock: SystemClock{}, proxy: http.ProxyFromEnvironment}
+	c := &Client{cfg: cfg, clock: SystemClock{}, proxy: http.ProxyFromEnvironment, dialTimeout: 30 * time.Second}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -122,7 +124,12 @@ func (s *Session) request(token string, body io.Reader) (*http.Request, error) {
 }
 
 // dialTLS dials addr over TLS, through the environment's HTTPS proxy if any.
+// The whole setup is bounded by dialTimeout, and by ctx: http2 hands us the
+// context of the first request and waits for this dial without any other way
+// out.
 func (c *Client) dialTLS(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.dialTimeout)
+	defer cancel()
 	if c.tls != nil {
 		merged := c.tls.Clone()
 		merged.NextProtos = cfg.NextProtos
@@ -135,7 +142,7 @@ func (c *Client) dialTLS(ctx context.Context, network, addr string, cfg *tls.Con
 	}
 	var raw net.Conn
 	if proxyURL == nil {
-		raw, err = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, network, addr)
+		raw, err = (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext(ctx, network, addr)
 	} else {
 		raw, err = dialViaProxy(ctx, proxyURL, addr)
 	}
@@ -150,7 +157,9 @@ func (c *Client) dialTLS(ctx context.Context, network, addr string, cfg *tls.Con
 	return conn, nil
 }
 
-// dialViaProxy opens a CONNECT tunnel to addr through an HTTP proxy.
+// dialViaProxy opens a CONNECT tunnel to addr through an HTTP proxy. The
+// socket is closed if ctx ends during the negotiation: reading the reply does
+// not watch ctx by itself.
 func dialViaProxy(ctx context.Context, proxyURL *url.URL, addr string) (net.Conn, error) {
 	if proxyURL.Scheme != "http" {
 		return nil, fmt.Errorf("cursor: unsupported proxy scheme %q", proxyURL.Scheme)
@@ -159,13 +168,11 @@ func dialViaProxy(ctx context.Context, proxyURL *url.URL, addr string) (net.Conn
 	if proxyURL.Port() == "" {
 		proxyAddr = net.JoinHostPort(proxyURL.Hostname(), "80")
 	}
-	conn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", proxyAddr)
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		return nil, fmt.Errorf("cursor: dial proxy: %w", err)
 	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	req := &http.Request{Method: http.MethodConnect, URL: &url.URL{Opaque: addr}, Host: addr, Header: http.Header{}}
 	if u := proxyURL.User; u != nil {
 		pass, _ := u.Password()
@@ -175,20 +182,30 @@ func dialViaProxy(ctx context.Context, proxyURL *url.URL, addr string) (net.Conn
 	}
 	if err := req.Write(conn); err != nil {
 		conn.Close()
+		if ctx.Err() != nil {
+			return nil, context.Cause(ctx)
+		}
 		return nil, fmt.Errorf("cursor: proxy CONNECT: %w", err)
 	}
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, req) //nolint:bodyclose // a CONNECT response has no body
 	if err != nil {
 		conn.Close()
+		if ctx.Err() != nil {
+			return nil, context.Cause(ctx)
+		}
 		return nil, fmt.Errorf("cursor: proxy CONNECT: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		conn.Close()
 		return nil, fmt.Errorf("cursor: proxy CONNECT: %s", resp.Status)
 	}
-	_ = conn.SetDeadline(time.Time{})
+	if !stop() {
+		conn.Close()
+		return nil, context.Cause(ctx)
+	}
 	if br.Buffered() > 0 {
+		conn.Close()
 		return nil, errors.New("cursor: proxy sent data before the tunnel was used")
 	}
 	return conn, nil

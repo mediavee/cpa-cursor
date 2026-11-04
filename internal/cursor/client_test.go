@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -197,6 +199,100 @@ func TestProxyRefusalIsAnError(t *testing.T) {
 	defer s.Close()
 	if err := nextErr(t, s); !strings.Contains(err.Error(), "proxy CONNECT") || errors.Is(err, io.EOF) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// silentProxy accepts a CONNECT and never answers it.
+func silentProxy(t *testing.T) (addr string, accepted <-chan net.Conn) {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	ch := make(chan net.Conn, 4)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if _, err := http.ReadRequest(bufio.NewReader(conn)); err != nil {
+				conn.Close()
+				continue
+			}
+			ch <- conn
+		}
+	}()
+	return ln.Addr().String(), ch
+}
+
+func TestCancelDuringProxyConnectReleasesTheSession(t *testing.T) {
+	addr, accepted := silentProxy(t)
+	c, err := NewClient(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.CloseIdleConnections)
+	c.proxy = func(*http.Request) (*url.URL, error) { return &url.URL{Scheme: "http", Host: addr}, nil }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := c.Run(ctx, "t", RunParams{Request: runRequest("hi")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var conn net.Conn
+	select {
+	case conn = <-accepted:
+		defer conn.Close()
+	case <-time.After(waitTimeout):
+		t.Fatal("the proxy never saw a CONNECT")
+	}
+
+	cancel()
+	if err := nextErr(t, s); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	select {
+	case <-s.Done():
+	case <-time.After(waitTimeout):
+		t.Fatal("the session's goroutines wait on the silent proxy after cancellation")
+	}
+	// The socket to the proxy is closed by us, not left for the proxy to close.
+	_ = conn.SetReadDeadline(time.Now().Add(waitTimeout))
+	if _, err := conn.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("proxy socket still open after cancellation: %v", err)
+	}
+}
+
+func TestSilentProxyIsBoundedByTheDialTimeout(t *testing.T) {
+	addr, _ := silentProxy(t)
+	c, err := NewClient(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.CloseIdleConnections)
+	c.proxy = func(*http.Request) (*url.URL, error) { return &url.URL{Scheme: "http", Host: addr}, nil }
+	c.dialTimeout = 150 * time.Millisecond
+
+	s, err := c.Run(context.Background(), "t", RunParams{Request: runRequest("hi")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	err = nextErr(t, s)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the dial timeout", err)
+	}
+	if ClassOf(err) != ClassRetryable {
+		t.Errorf("a dial timeout should be retryable, class %q", ClassOf(err))
+	}
+	select {
+	case <-s.Done():
+	case <-time.After(waitTimeout):
+		t.Fatal("session still waiting on the proxy after the dial timeout")
 	}
 }
 

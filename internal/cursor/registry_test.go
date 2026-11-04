@@ -2,6 +2,8 @@ package cursor
 
 import (
 	"errors"
+	"io"
+	"slices"
 	"testing"
 	"time"
 
@@ -127,6 +129,69 @@ func TestTakeNeedsEveryPendingCallAnswered(t *testing.T) {
 	}
 	if reg.Len() != 0 {
 		t.Error("taken run still registered")
+	}
+}
+
+// A call that reaches the server after the step was handed over belongs to the
+// next step: it must neither block the resume of the handed calls nor be lost.
+func TestLateToolCallWhileParkedDoesNotBlockResume(t *testing.T) {
+	up := newFakeUpstream(t)
+	clk := newFakeClock()
+	s, fs := startSession(t, up, clk, RunParams{Tools: []*agentv1.McpToolDefinition{testTool("a")}})
+	reg := NewRegistry(RegistryConfig{Clock: clk})
+	t.Cleanup(reg.Close)
+	fs.recv()
+
+	fs.send(mcpArgsMsg(1, "c1", "a"), false)
+	eventually(t, "the quiet timer", func() bool { return clk.active() >= 3 })
+	clk.Advance(time.Second)
+	if tc := nextEvent(t, s).(ToolCallsEvent); len(tc.Calls) != 1 {
+		t.Fatalf("first step = %v", tc.Calls)
+	}
+	if err := reg.Park(s); err != nil {
+		t.Fatal(err)
+	}
+
+	fs.send(mcpArgsMsg(2, "c2", "a"), false)
+	fs.send(listedMsg(2), false)
+	eventually(t, "the late call to be received", func() bool { return len(fs.in) == 0 })
+	time.Sleep(50 * time.Millisecond)
+
+	got, ok := reg.Take([]string{"c1"})
+	if !ok || got != s {
+		t.Fatalf("a call the client never saw blocks the resume: pending=%v registered=%d", s.PendingToolCalls(), reg.Len())
+	}
+	if err := got.SubmitToolResults(ToolResult{ToolCallID: "c1", Content: []ToolContent{{Text: "one"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The late call comes out as the next step, and the run goes on to its end.
+	var calls []*agentv1.McpArgs
+	for calls == nil {
+		if tc, ok := nextEvent(t, got).(ToolCallsEvent); ok {
+			calls = tc.Calls
+		}
+	}
+	if len(calls) != 1 || calls[0].GetToolCallId() != "c2" || !slices.Equal(got.PendingToolCalls(), []string{"c2"}) {
+		t.Fatalf("next step = %v, pending %v", calls, got.PendingToolCalls())
+	}
+	if err := got.SubmitToolResults(ToolResult{ToolCallID: "c2", Content: []ToolContent{{Text: "two"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var answered []string
+	for len(answered) < 2 {
+		if r := fs.recvNonHeartbeat().msg.GetExecClientMessage().GetMcpResult(); r != nil {
+			answered = append(answered, r.GetSuccess().GetContent()[0].GetText().GetText())
+		}
+	}
+	if !slices.Equal(answered, []string{"one", "two"}) {
+		t.Errorf("results reached the server as %v", answered)
+	}
+	fs.send(textMsg("done"), false)
+	fs.send(turnEndedMsg(1, 1), false)
+	fs.end(`{}`)
+	if _, err := drain(t, got); !errors.Is(err, io.EOF) {
+		t.Fatalf("run ended with %v", err)
 	}
 }
 
