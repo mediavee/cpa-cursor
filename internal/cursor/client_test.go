@@ -235,7 +235,6 @@ func TestCancelDuringProxyConnectReleasesTheSession(t *testing.T) {
 	}
 	t.Cleanup(c.CloseIdleConnections)
 	c.proxy = func(*http.Request) (*url.URL, error) { return &url.URL{Scheme: "http", Host: addr}, nil }
-	c.dialTimeout = 300 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -261,8 +260,7 @@ func TestCancelDuringProxyConnectReleasesTheSession(t *testing.T) {
 	case <-time.After(waitTimeout):
 		t.Fatal("the session's goroutines wait on the silent proxy after cancellation")
 	}
-	// The session ends at once; the HTTP/2 pool dials on its own, so the socket to the proxy is closed by us
-	// at the dial timeout at the latest, not left for the proxy to close.
+	// The socket to the proxy is closed by us, not left for the proxy to close.
 	_ = conn.SetReadDeadline(time.Now().Add(waitTimeout))
 	if _, err := conn.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("proxy socket still open after cancellation: %v", err)
