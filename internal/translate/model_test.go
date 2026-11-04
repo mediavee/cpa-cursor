@@ -27,6 +27,22 @@ var modelCatalog = catalog{
 			{Slug: "claude-opus-5-5-high", Parameters: []translate.Parameter{{ID: "context", Value: "300k"}, {ID: "effort", Value: "high"}, {ID: "fast", Value: "false"}}},
 		},
 	},
+	// As captured: gpt-5.4 offers "extra-high" where OpenAI says "xhigh".
+	"gpt-5.4-medium": {
+		ID: "gpt-5.4", Slug: "gpt-5.4-medium",
+		Parameters: []translate.Parameter{{ID: "context", Value: "272k"}, {ID: "reasoning", Value: "medium"}, {ID: "fast", Value: "false"}},
+		Effort:     &translate.EffortParameter{ID: "reasoning", Values: []string{"none", "low", "medium", "high", "extra-high"}},
+		Variants: []translate.Variant{
+			{Slug: "gpt-5.4-medium", Parameters: []translate.Parameter{{ID: "context", Value: "272k"}, {ID: "reasoning", Value: "medium"}, {ID: "fast", Value: "false"}}},
+			{Slug: "gpt-5.4-high", Parameters: []translate.Parameter{{ID: "context", Value: "272k"}, {ID: "reasoning", Value: "high"}, {ID: "fast", Value: "false"}}},
+			{Slug: "gpt-5.4-xhigh", Parameters: []translate.Parameter{{ID: "context", Value: "272k"}, {ID: "reasoning", Value: "extra-high"}, {ID: "fast", Value: "false"}}},
+		},
+	},
+	// As captured by GetUsableModels: this route is Max mode.
+	"claude-opus-5-5-high-fast": {
+		ID: "claude-opus-5-5", Slug: "claude-opus-5-5-high-fast", MaxMode: true,
+		Parameters: []translate.Parameter{{ID: "context", Value: "1m"}, {ID: "effort", Value: "high"}, {ID: "fast", Value: "true"}},
+	},
 	"gpt-5.4-mini-low": {
 		ID: "gpt-5.4-mini", Slug: "gpt-5.4-mini-low", MaxMode: true,
 		Parameters: []translate.Parameter{{ID: "reasoning", Value: "low"}},
@@ -64,6 +80,10 @@ func TestModelResolution(t *testing.T) {
 			"claude-opus-5-5-low", `{"modelId":"claude-opus-5-5","parameters":[{"id":"context","value":"300k"},{"id":"effort","value":"low"},{"id":"fast","value":"false"}]}`},
 		{"an effort above the offered range maps to the strongest offered", "gpt-5.4-mini-low", "max",
 			"gpt-5.4-mini-low", `{"modelId":"gpt-5.4-mini","maxMode":true,"parameters":[{"id":"reasoning","value":"xhigh"}]}`},
+		{"the catalog's own spelling is sent: xhigh reaches extra-high, not high", "gpt-5.4-medium", "xhigh",
+			"gpt-5.4-xhigh", `{"modelId":"gpt-5.4","parameters":[{"id":"context","value":"272k"},{"id":"reasoning","value":"extra-high"},{"id":"fast","value":"false"}]}`},
+		{"an effort spelled as the catalog spells it is kept", "gpt-5.4-medium", "high",
+			"gpt-5.4-high", `{"modelId":"gpt-5.4","parameters":[{"id":"context","value":"272k"},{"id":"reasoning","value":"high"},{"id":"fast","value":"false"}]}`},
 		{"a model without an effort parameter ignores the effort", "composer-2.5", "high",
 			"composer-2.5", `{"modelId":"composer-2.5","parameters":[{"id":"fast","value":"false"}]}`},
 		{"an unknown effort value is ignored", "claude-opus-5-5-medium", "turbo",
@@ -90,6 +110,22 @@ func TestModelResolution(t *testing.T) {
 				t.Errorf("requested_model\n got: %s\nwant: %s", got, tt.wantRequested)
 			}
 		})
+	}
+}
+
+func TestMaxModeOnBothModelFields(t *testing.T) {
+	for slug, want := range map[string]bool{"claude-opus-5-5-high-fast": true, "composer-2.5": false} {
+		run, err := translate.Translate(decode(t, `{"model":"`+slug+`","messages":[{"role":"user","content":"hi"}]}`), translate.Options{Catalog: modelCatalog})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := run.Request.GetRequestedModel().GetMaxMode(); got != want {
+			t.Errorf("%s: requested_model.max_mode = %v, want %v", slug, got, want)
+		}
+		details := run.Request.GetModelDetails()
+		if details.MaxMode == nil || *details.MaxMode != want {
+			t.Errorf("%s: model_details.max_mode = %v, want %v", slug, details.MaxMode, want)
+		}
 	}
 }
 

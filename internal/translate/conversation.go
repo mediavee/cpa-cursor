@@ -23,14 +23,39 @@ type image struct {
 	data []byte
 }
 
-type userMessage struct {
-	parts  []string // text parts, in order
-	images []image
+// userPart is a text or an image; exactly one is set.
+type userPart struct {
+	text  string
+	image *image
 }
 
-func (u userMessage) text() string { return strings.Join(u.parts, "\n") }
+// userMessage keeps its parts in the order the client sent them. The action cannot: the protocol
+// splits it into text and selected images (see text and images).
+type userMessage struct {
+	parts []userPart
+}
 
-func (u userMessage) empty() bool { return len(u.parts) == 0 && len(u.images) == 0 }
+func (u userMessage) text() string {
+	var texts []string
+	for _, p := range u.parts {
+		if p.image == nil {
+			texts = append(texts, p.text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func (u userMessage) images() []image {
+	var imgs []image
+	for _, p := range u.parts {
+		if p.image != nil {
+			imgs = append(imgs, *p.image)
+		}
+	}
+	return imgs
+}
+
+func (u userMessage) empty() bool { return len(u.parts) == 0 }
 
 type toolCall struct {
 	id   string // wire id, valid for Cursor
@@ -167,7 +192,7 @@ func parseUser(content Content, resolve ImageResolver) (userMessage, error) {
 		switch p.Type {
 		case "text":
 			if p.Text != "" {
-				u.parts = append(u.parts, p.Text)
+				u.parts = append(u.parts, userPart{text: p.Text})
 			}
 		case "image_url":
 			if p.ImageURL == nil || p.ImageURL.URL == "" {
@@ -177,7 +202,7 @@ func parseUser(content Content, resolve ImageResolver) (userMessage, error) {
 			if err != nil {
 				return u, err
 			}
-			u.images = append(u.images, img)
+			u.parts = append(u.parts, userPart{image: &img})
 		default:
 			return u, fmt.Errorf("unsupported content part type %q", p.Type)
 		}

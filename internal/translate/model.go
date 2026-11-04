@@ -3,6 +3,9 @@ package translate
 import (
 	"fmt"
 	"slices"
+	"strings"
+
+	"google.golang.org/protobuf/proto"
 
 	agentv1 "github.com/mediavee/cpa-cursor/internal/gen/agent/v1"
 )
@@ -91,19 +94,34 @@ func resolveModel(cat Catalog, slug, effort string) (resolvedModel, error) {
 		requested.Parameters = append(requested.Parameters, &agentv1.RequestedModel_ModelParameterValue{Id: p.ID, Value: p.Value})
 	}
 	return resolvedModel{
-		details:   &agentv1.ModelDetails{ModelId: detailsSlug, DisplayModelId: detailsSlug, DisplayName: detailsSlug},
+		details:   &agentv1.ModelDetails{ModelId: detailsSlug, DisplayModelId: detailsSlug, DisplayName: detailsSlug, MaxMode: proto.Bool(m.MaxMode)},
 		requested: requested,
 	}, nil
 }
 
+// effortRank places an effort value on effortScale, or -1. Catalogs spell some values differently
+// from OpenAI ("extra-high" for "xhigh"), so spellings are compared normalized.
+func effortRank(v string) int {
+	v = strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(v))
+	if v == "extrahigh" {
+		v = "xhigh"
+	}
+	return slices.Index(effortScale, v)
+}
+
+// nearestEffort picks the offered value closest to want and returns it exactly as the catalog
+// spells it, since that is what Cursor accepts.
 func nearestEffort(want string, offered []string) (string, bool) {
-	wantRank := slices.Index(effortScale, want)
+	if slices.Contains(offered, want) {
+		return want, true
+	}
+	wantRank := effortRank(want)
 	if wantRank < 0 {
 		return "", false
 	}
 	best, bestRank := "", -1
 	for _, o := range offered {
-		rank := slices.Index(effortScale, o)
+		rank := effortRank(o)
 		if rank < 0 {
 			continue
 		}

@@ -335,6 +335,23 @@ func TestTranslateImages(t *testing.T) {
 	}
 }
 
+func TestTranslateKeepsPartOrder(t *testing.T) {
+	a := base64.StdEncoding.EncodeToString([]byte("A"))
+	b := base64.StdEncoding.EncodeToString([]byte("B"))
+	run := translateOK(t, `{"model":"composer-2.5","messages":[
+		{"role":"user","content":[
+			{"type":"text","text":"First diagram:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,`+a+`"}},
+			{"type":"text","text":"Second diagram:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,`+b+`"}}]},
+		{"role":"assistant","content":"seen"},
+		{"role":"user","content":"compare"}]}`)
+	want := `{"role":"user","content":[` +
+		`{"type":"text","text":"First diagram:"},{"type":"image","image":"data:image/png;base64,` + a + `","mediaType":"image/png"},` +
+		`{"type":"text","text":"Second diagram:"},{"type":"image","image":"data:image/png;base64,` + b + `","mediaType":"image/png"}]}`
+	if got := root(t, run); len(got) != 2 || got[0] != want {
+		t.Errorf("history blob\n got: %q\nwant: %q first", got, want)
+	}
+}
+
 func TestTranslateRejects(t *testing.T) {
 	tests := []struct {
 		name    string

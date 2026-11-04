@@ -150,14 +150,15 @@ func rulesEntry(system []string) string {
 }
 
 func userParts(u userMessage) []any {
-	parts := make([]any, 0, len(u.parts)+len(u.images))
-	for _, t := range u.parts {
-		parts = append(parts, textPart{Type: "text", Text: t})
-	}
-	for _, img := range u.images {
+	parts := make([]any, 0, len(u.parts))
+	for _, p := range u.parts {
+		if p.image == nil {
+			parts = append(parts, textPart{Type: "text", Text: p.text})
+			continue
+		}
 		parts = append(parts, imagePart{
-			Type: "image", MediaType: img.mime,
-			Image: "data:" + img.mime + ";base64," + base64.StdEncoding.EncodeToString(img.data),
+			Type: "image", MediaType: p.image.mime,
+			Image: "data:" + p.image.mime + ";base64," + base64.StdEncoding.EncodeToString(p.image.data),
 		})
 	}
 	return parts
@@ -288,9 +289,9 @@ func newUserMessage(u userMessage, position int) *agentv1.UserMessage {
 		MessageId: h.String(),
 		Mode:      agentv1.AgentMode_AGENT_MODE_AGENT,
 	}
-	if len(u.images) > 0 {
+	if imgs := u.images(); len(imgs) > 0 {
 		m.SelectedContext = &agentv1.SelectedContext{}
-		for _, img := range u.images {
+		for _, img := range imgs {
 			m.SelectedContext.SelectedImages = append(m.SelectedContext.SelectedImages, &agentv1.SelectedImage{
 				Uuid:         uuid.NewSHA1(h, img.data).String(),
 				MimeType:     img.mime,
