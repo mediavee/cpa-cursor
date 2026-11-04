@@ -183,7 +183,8 @@ def proto_file(path):
     if path.endswith(".proto"):
         return path
     p = re.sub(r"^(\.\./)+proto/dist/generated/", "", path)
-    return re.sub(r"_pb\.js$", ".proto", p)
+    # *_pb.js and *_connect.js modules both declare messages; no .js name may reach an import.
+    return re.sub(r"(_pb)?\.js$", ".proto", p)
 
 
 def emit(b, out_dir):
@@ -310,6 +311,11 @@ def main():
         b.load(open(f, encoding="utf-8", errors="replace").read())
     b.build()
     emit(b, out)
+    stale = [f for f in glob.glob(os.path.join(out, "**", "*.js"), recursive=True)]
+    stale += [f for f in glob.glob(os.path.join(out, "**", "*.proto"), recursive=True)
+              if re.search(r'^import ".*\.js";', open(f).read(), re.M)]
+    if stale:
+        sys.exit("extractor emitted .js names: " + ", ".join(sorted(stale)))
     unresolved = sum(1 for t in b.types.values() if t["kind"] == "msg" for r in t["refs"] if r is None)
     print(f"types={len(b.types)} services={len({s[0] for s in b.services})} unresolved_refs={unresolved}")
 

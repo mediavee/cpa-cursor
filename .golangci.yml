@@ -1,0 +1,38 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - misspell
+    - nilerr
+    - noctx
+    - unconvert
+    - usestdlibvars
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*compress/gzip.Reader).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    paths:
+      - internal/gen
+    rules:
+      # Live harness that calls the keychain and RoundTrip directly, like the spike did.
+      - path: cmd/translate-live/
+        linters: [bodyclose, noctx]
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - internal/gen
