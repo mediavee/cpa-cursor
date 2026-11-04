@@ -26,7 +26,7 @@ import (
 //	                          {"type":"image","image":"data:<mime>;base64,<b64>","mediaType":"<mime>"}]}
 //	{"role":"user","content":"<rules>\n<system prompt>\n</rules>"}
 //
-// Proof (cmd/translate-live -scenario memory, composer-2.5, 2026-11-04): over three requests built
+// Checked against the live service (composer-2.5, 2026-11-04): over three requests built
 // only from the client's messages, the model recalls a word given in the first, and a system prompt
 // ("end every reply with OVER") is followed both on the history-less first request (rules from
 // request_context) and on the later ones (rules entry above). Without any system message the root
@@ -45,8 +45,8 @@ import (
 //	 "id":"tool_0c59615a-..."}
 //
 // (the server adds redacted-reasoning parts, an "id" on assistant blobs and providerOptions, which a
-// client cannot reproduce and the model does not need). Proof (cmd/translate-live -scenario tool and
-// -scenario parallel): a second request holding only the client's messages, with the call and the
+// client cannot reproduce and the model does not need). Checked against the live service (one tool call, and
+// two parallel ones): a second request holding only the client's messages, with the call and the
 // result written in this form, made the model answer from the result. An assistant message with
 // several tool calls is one blob with several tool-call parts, followed by one tool blob per result,
 // in the order the tool messages arrived (the parallel scenario answers them in reverse).
@@ -173,7 +173,7 @@ func userParts(u userMessage) []any {
 // history. Proof (live, composer-2.5): with the complete root but no turns, the resume ended at once
 // with an empty turn_ended (0.3 s, no output); an empty user message action instead made the model
 // answer "Nothing new in your last message" and ignore the result; with turns, the model continued
-// from the tool result (cmd/translate-live -scenario tool).
+// from the tool result (checked against the live service).
 
 // turnEntries builds the turn blobs for the whole history.
 func (c *conversation) turnEntries(blobs *blobSet) ([][]byte, error) {
