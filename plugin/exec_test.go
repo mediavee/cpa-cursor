@@ -231,12 +231,11 @@ func TestExecuteStreamStopsTheRunWhenTheHostClosesTheStream(t *testing.T) {
 			t.Error("the run was not abandoned although the client left")
 		}
 	})
-	// The client has already left when the first chunk is emitted.
+	// The client has already left when the first chunk is emitted. The call may fail or succeed
+	// depending on whether the first chunk or the probe comes first; either way the run must stop.
 	gone := errors.New("stream 7 is not open")
 	h.host.emitErr.Store(&gone)
-	if _, e := h.call(pluginabi.MethodExecutorExecuteStream, h.execRequest("auth-1", h.token(time.Hour, "s"), "composer-x", chatBody("composer-x", userMsg("hi")), "s7")); e != nil {
-		t.Fatalf("execute_stream: %+v", e)
-	}
+	_, _ = h.call(pluginabi.MethodExecutorExecuteStream, h.execRequest("auth-1", h.token(time.Hour, "s"), "composer-x", chatBody("composer-x", userMsg("hi")), "s7"))
 	run := <-h.up.runSeen
 	select {
 	case <-run.gone:

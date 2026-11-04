@@ -24,6 +24,8 @@ const (
 	defaultProbeEvery = 5 * time.Second
 	// catalogRetryAge is how old a model list must be before an unknown model asks Cursor again.
 	catalogRetryAge = time.Minute
+	// discoveryTimeout bounds the lookup of the agent host that precedes a new run.
+	discoveryTimeout = 5 * time.Second
 )
 
 type execRequest struct {
@@ -103,6 +105,7 @@ func (j *job) open(ctx context.Context) (*cursor.Session, error) {
 		// is (another credential, or waiting for more results), is superseded.
 		j.rt.dropParked(ids)
 	}
+	j.discoverAgentHost(ctx)
 	blobs := cursor.NewBlobs()
 	for _, b := range j.run.Blobs {
 		blobs.Set(b.ID, b.Data)
@@ -111,6 +114,16 @@ func (j *job) open(ctx context.Context) (*cursor.Session, error) {
 		Request: j.run.Request, Blobs: blobs,
 		Tools: j.run.RequestContext.Tools, Rules: j.run.RequestContext.Rules, Env: j.run.RequestContext.Env,
 	})
+}
+
+// discoverAgentHost asks Cursor which host serves the Run stream before a new run opens. The client
+// caches the answer; when Cursor does not give one, the run goes to the configured agent_url.
+func (j *job) discoverAgentHost(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
+	defer cancel()
+	if _, err := j.rt.client.GetServerConfig(ctx, j.token); err != nil {
+		j.p.logf("warn", "cannot discover Cursor's agent host, using agent_url: %v", err)
+	}
 }
 
 // pendingResults converts the client's tool results to the session's, keeping the calls it waits on.
@@ -188,7 +201,12 @@ func (r *runner) next(ctx context.Context) ([]translate.ChatChunk, error) {
 		// Parked before the client can see the calls, so that its answer finds the run.
 		if err := r.job.rt.registry(r.job.authID).Park(r.sess); err != nil {
 			r.sess.Close()
-			return nil, err
+			if !errors.Is(err, cursor.ErrClosed) {
+				return nil, err
+			}
+			// The runtime was retired while the request ran: the calls are still answered, and the
+			// client's results will replay the conversation.
+			r.job.p.logf("info", "runtime retired during the request: tool calls returned without parking their run")
 		}
 		r.finish = translate.FinishToolCalls
 		return chunks, nil
@@ -247,15 +265,21 @@ func (p *Plugin) executeStream(raw []byte) (any, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), rt.cfg.RequestTimeout)
+	// CPA does not say when the client leaves; the stream is watched from here on so that a client
+	// that goes while the request is prepared or waits for its first output stops the run too.
+	watch := p.watchStream(ctx, cancel, req.StreamID)
+	fail := func(err error) (any, error) {
+		watch.stop()
+		cancel()
+		return nil, err
+	}
 	j, perr := p.prepare(ctx, rt, req.ExecutorRequest)
 	if perr != nil {
-		cancel()
-		return nil, perr
+		return fail(perr)
 	}
 	sess, err := j.open(ctx)
 	if err != nil {
-		cancel()
-		return nil, p.upstreamError(ctx, rt, j.token, err)
+		return fail(p.upstreamError(ctx, rt, j.token, err))
 	}
 	r := j.newRunner(p, sess)
 
@@ -263,29 +287,21 @@ func (p *Plugin) executeStream(raw []byte) (any, error) {
 	for len(first) == 0 && !r.done {
 		chunks, err := r.next(ctx)
 		if err != nil {
-			cancel()
-			return nil, p.upstreamError(ctx, rt, j.token, err)
+			return fail(p.upstreamError(ctx, rt, j.token, err))
 		}
 		first = chunks
 	}
 	p.goSafe("execute_stream", func() {
 		defer cancel()
-		p.pumpStream(ctx, cancel, req.StreamID, r, first)
+		defer watch.stop()
+		p.pumpStream(ctx, req.StreamID, watch, r, first)
 	})
 	return map[string]any{"headers": http.Header{"Content-Type": {"text/event-stream"}}}, nil
 }
 
 // pumpStream sends the chunks of a run to CPA until the run ends, then closes the stream.
-func (p *Plugin) pumpStream(ctx context.Context, cancel context.CancelFunc, streamID string, r *runner, chunks []translate.ChatChunk) {
-	var lastEmit atomic.Int64
-	lastEmit.Store(time.Now().UnixNano())
-	emit := func(payload []byte) error {
-		if err := p.emit(streamID, payload); err != nil {
-			return err
-		}
-		lastEmit.Store(time.Now().UnixNano())
-		return nil
-	}
+func (p *Plugin) pumpStream(ctx context.Context, streamID string, watch *streamWatch, r *runner, chunks []translate.ChatChunk) {
+	emit := func(payload []byte) error { return watch.emit(payload) }
 	emitChunk := func(c translate.ChatChunk) error {
 		b, err := json.Marshal(c)
 		if err != nil {
@@ -305,10 +321,6 @@ func (p *Plugin) pumpStream(ctx context.Context, cancel context.CancelFunc, stre
 		// CPA closed the stream: its client left. Returning cancels the run's context.
 		p.logf("debug", "stream %s closed by the host: %v", streamID, err)
 	}
-
-	lctx, stopProbe := context.WithCancel(ctx)
-	defer stopProbe()
-	p.goSafe("stream_probe", func() { p.probe(lctx, cancel, streamID, &lastEmit) })
 
 	if err := emitAll(chunks); err != nil {
 		gone(err)
@@ -338,24 +350,50 @@ func (p *Plugin) pumpStream(ctx context.Context, cancel context.CancelFunc, stre
 	p.closeStream(streamID, nil)
 }
 
-// probe cancels the run when the host no longer reads the stream. An idle stream is tested with an
-// empty emit.
-func (p *Plugin) probe(ctx context.Context, cancel context.CancelFunc, streamID string, lastEmit *atomic.Int64) {
-	t := time.NewTicker(p.probeEvery)
+// streamWatch emits to one CPA stream and notices when CPA stops reading it. An idle stream is
+// tested with an empty emit, which fails once the stream is closed.
+type streamWatch struct {
+	p         *Plugin
+	streamID  string
+	lastEmit  atomic.Int64
+	stopProbe context.CancelFunc
+}
+
+// watchStream starts watching the stream: cancel is called when the host no longer reads it.
+func (p *Plugin) watchStream(ctx context.Context, cancel context.CancelFunc, streamID string) *streamWatch {
+	w := &streamWatch{p: p, streamID: streamID}
+	w.lastEmit.Store(time.Now().UnixNano())
+	pctx, stop := context.WithCancel(ctx)
+	w.stopProbe = stop
+	p.goSafe("stream_probe", func() { w.probe(pctx, cancel) })
+	return w
+}
+
+func (w *streamWatch) stop() { w.stopProbe() }
+
+func (w *streamWatch) emit(payload []byte) error {
+	if err := w.p.emit(w.streamID, payload); err != nil {
+		return err
+	}
+	w.lastEmit.Store(time.Now().UnixNano())
+	return nil
+}
+
+func (w *streamWatch) probe(ctx context.Context, cancel context.CancelFunc) {
+	t := time.NewTicker(w.p.probeEvery)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if time.Now().UnixNano()-lastEmit.Load() < int64(p.probeEvery) {
+			if time.Now().UnixNano()-w.lastEmit.Load() < int64(w.p.probeEvery) {
 				continue
 			}
-			if err := p.emit(streamID, nil); err != nil {
+			if w.emit(nil) != nil {
 				cancel()
 				return
 			}
-			lastEmit.Store(time.Now().UnixNano())
 		}
 	}
 }

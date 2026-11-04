@@ -68,11 +68,20 @@ type runtime struct {
 
 	mu   sync.Mutex
 	regs map[string]*cursor.Registry
+	// closed makes the retirement terminal: no registry opens after it, whoever still holds the runtime.
+	closed bool
 }
 
+// registry returns the credential's registry. Once the runtime is retired it is a closed one, which
+// refuses to park: a request that outlives its runtime cannot leave a run nobody can resume.
 func (rt *runtime) registry(authID string) *cursor.Registry {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	if rt.closed {
+		r := cursor.NewRegistry(cursor.RegistryConfig{})
+		r.Close()
+		return r
+	}
 	r, ok := rt.regs[authID]
 	if !ok {
 		r = cursor.NewRegistry(cursor.RegistryConfig{TTL: rt.cfg.ParkTTL, MaxParked: rt.cfg.MaxParked})
@@ -95,8 +104,11 @@ func (rt *runtime) dropParked(toolCallIDs []string) {
 	}
 }
 
+// close retires the runtime: it closes the parked runs and refuses new ones. Requests already running
+// finish on it.
 func (rt *runtime) close() {
 	rt.mu.Lock()
+	rt.closed = true
 	regs := rt.regs
 	rt.regs = map[string]*cursor.Registry{}
 	rt.mu.Unlock()
@@ -154,6 +166,11 @@ func (p *Plugin) handle(method string, req []byte) (any, error) {
 	case pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure:
 		return p.configure(req)
 	case pluginabi.MethodPluginQuiesce:
+		// CPA keeps a replaced image loaded without calling Shutdown: it must hold nothing. A rollback
+		// registers it again, which builds a fresh runtime.
+		if rt := p.rt.Swap(nil); rt != nil {
+			rt.close()
+		}
 		return struct{}{}, nil
 	case pluginabi.MethodPluginShutdown:
 		p.Shutdown()

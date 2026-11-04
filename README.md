@@ -53,7 +53,7 @@ plugin id), and enable it in `config.yaml`. The block is opt-in: without `enable
           models_refresh_interval: 1h                # how often a credential's model list is refreshed
           request_timeout: 15m                       # upper bound of one request
           api_url: "https://api2.cursor.sh"          # for tests and proxies only
-          agent_url: "https://agentn.global.api5.cursor.sh"
+          agent_url: "https://agentn.global.api5.cursor.sh"   # Run stream host, used when Cursor announces none
           site_url: "https://cursor.com"
 
 A change to this block is applied by CPA's config reload, without restarting. `client_version` is sent to
