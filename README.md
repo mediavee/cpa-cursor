@@ -130,7 +130,74 @@ request delivers the results to it.
 - `plugin`: the CPA plugin (auth, models, executor, quota), a normal package so it is tested without cgo.
 - `cmd/plugin`: the cgo glue that exports it as a C shared library.
 - `cmd/cursor-probe`: a diagnostic client for a real account.
+- `cmd/cursor-relay`, `internal/relay`: the credential-swapping relay for Cursor's own clients (see [Cursor relay](#cursor-relay)).
 - `proto`, `internal/gen`: the protocol definitions, extracted from the CLI bundle, and their generated Go types.
+
+## Cursor relay
+
+`cursor-relay` is a small HTTP/2 server for Cursor's **own** clients (`cursor-agent`, `@cursor/sdk`). A client
+points its API endpoint at the relay and presents a key of your gateway as its Cursor API key; the relay forwards
+every call to Cursor exactly as the client sent it, except the credential, which it replaces with the account's.
+The same warning applies as for the plugin: Cursor's terms forbid this use.
+
+- `agent.v1.*` goes to the agent host Cursor announces, `/v1/*` (the public API) to `https://api.cursor.com` with the
+  user API key, everything else to `https://api2.cursor.sh` with the account's session token. Bodies, headers other
+  than the credential, trailers and bidirectional streams pass unchanged; a client cancel cancels upstream.
+- `GetServerConfig` is the one response the relay edits: every agent host it announces is replaced by the relay's
+  public URL, so the run stream comes back to the relay instead of going to Cursor directly.
+- `POST /auth/exchange_user_api_key` is answered by the relay. It asks your gateway whether the client key is valid
+  (one `GET` with the key as bearer, `200` means valid, cached briefly) and returns a token that has the session
+  token's JWT header and claims and, in place of the signature, the client key sealed with the relay's own key
+  (AES-256-GCM): a restart needs no state, and a revoked key stops working within the cache time. Every other call
+  must carry such a token (`/v1/*` carries the client key itself), otherwise it gets `401` and nothing is sent to
+  Cursor. No credential a client sends is ever forwarded.
+- The relay exchanges the account's user API key for a session token itself, renews it five minutes before it
+  expires, and renews it once after an upstream `401` (a unary call is then sent again; a stream is not).
+- Logs carry the method, path, status, duration and a short hash of the client key, never a key or a token.
+- `GET /healthz` answers `200 {"upstreamToken":true}` while a session token is held, `503` otherwise.
+
+### Configuration
+
+All settings are environment variables, never flags. A secret can be given directly or, with the `_FILE` suffix,
+as the path of a file that holds it.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `CURSOR_RELAY_USER_API_KEY[_FILE]` | The Cursor user API key of the account (required). | |
+| `CURSOR_RELAY_SEAL_KEY[_FILE]` | A secret of at least 32 characters that seals client keys inside tokens (required), for example `openssl rand -base64 32`. Changing it signs every client out. | |
+| `CURSOR_RELAY_VERIFIER_URL` | URL asked with `GET` and the client key as bearer; `200` means valid (required). | |
+| `CURSOR_RELAY_PUBLIC_URL` | How clients reach the relay, for example `https://relay.example.com` (required). | |
+| `CURSOR_RELAY_LISTEN` | Listen address. | `:8080` |
+| `CURSOR_RELAY_TLS_CERT_FILE`, `CURSOR_RELAY_TLS_KEY_FILE` | Serve TLS. Without them the relay serves cleartext HTTP/2 (h2c) and HTTP/1.1, for a reverse proxy. | |
+| `CURSOR_RELAY_VERIFY_TTL` | How long a valid answer of the verifier is kept. | `1m` |
+| `CURSOR_RELAY_VERIFY_NEGATIVE_TTL` | How long a refusal is kept. | `10s` |
+| `CURSOR_RELAY_DRAIN_TIMEOUT` | How long open streams may finish after `SIGTERM`. | `30s` |
+| `CURSOR_RELAY_API_URL`, `CURSOR_RELAY_AGENT_URL`, `CURSOR_RELAY_PUBLIC_API_URL` | Upstreams, for tests and proxies. | Cursor's |
+
+### Run it
+
+`make relay-image` builds a static, non-root image (`RELAY_IMAGE=name:tag` to name it). Behind a reverse proxy, the
+relay must be reached over HTTP/2, because the agent run is a bidirectional stream. With Caddy:
+
+    relay.example.com {
+        reverse_proxy h2c://127.0.0.1:8080 {
+            flush_interval -1
+        }
+    }
+
+    CURSOR_RELAY_PUBLIC_URL=https://relay.example.com \
+    CURSOR_RELAY_VERIFIER_URL=https://gateway.example.com/v1/models \
+    CURSOR_RELAY_USER_API_KEY_FILE=/run/secrets/cursor_user_key \
+    CURSOR_RELAY_SEAL_KEY_FILE=/run/secrets/relay_seal_key \
+    cursor-relay
+
+Clients then run with the relay as endpoint and a gateway key as API key:
+
+    CURSOR_API_ENDPOINT=https://relay.example.com CURSOR_API_KEY=<gateway key> cursor-agent -p "..."
+    CURSOR_BACKEND_URL=https://relay.example.com    CURSOR_API_KEY=<gateway key> node app-using-cursor-sdk.mjs
+
+A few calls of the clients still go to Cursor directly, without any credential: the feature-flag bootstrap
+(`BootstrapStatsig` on `api2.cursor.sh`) and Cursor's own MCP servers. The relay sees only what the client sends it.
 
 ## Development
 

@@ -2,6 +2,7 @@ BUF := go run github.com/bufbuild/buf/cmd/buf@v1.47.2
 PROTOC_GEN_GO := google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.0
 PLUGIN_IMAGE ?= golang:1.26-bookworm
 PLUGIN_ARCHS ?= arm64 amd64
+RELAY_IMAGE ?= cursor-relay:dev
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 
@@ -62,3 +63,8 @@ plugin:
 				&& rm -f bin/plugins/linux/'$$arch'/cursor.h; \
 				status=$$?; chown -R "$$OWNER" bin; exit $$status' || exit 1; \
 	done
+
+# relay-image builds the cursor-relay image for the host's architecture.
+.PHONY: relay-image
+relay-image:
+	docker build -f cmd/cursor-relay/Dockerfile -t $(RELAY_IMAGE) .
