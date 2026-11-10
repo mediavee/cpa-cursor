@@ -173,3 +173,23 @@ func TestAServerConfigTheRelayCannotReadIsNotPassedOn(t *testing.T) {
 		}
 	}
 }
+
+func TestAGzipServerConfigOverTheCapIsNotPassedOn(t *testing.T) {
+	// Padding that ends exactly at the cap, then the agent hosts: a cut at the cap still parses, without them.
+	var m []byte
+	record := protowire.AppendTag(nil, 999, protowire.BytesType)
+	record = protowire.AppendBytes(record, make([]byte, 1024-len(record)-2))
+	for len(m) < maxServerConfigBytes {
+		m = append(m, record...)
+	}
+	m = append(m[:maxServerConfigBytes], serverConfigProto("https://agent.example.test", "https://agentn.example.test", "https://third.example.test")...)
+	body := gz(m)
+	e := newEnv(t, envOpts{api: func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(body)
+	}})
+	resp, _ := e.do(http.MethodPost, serverConfigPath, e.token(), "application/proto", "{}")
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status %d, want 502", resp.StatusCode)
+	}
+}

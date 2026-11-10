@@ -169,8 +169,11 @@ func (r *Relay) rewriteServerConfigResponse(resp *http.Response) error {
 		if err != nil {
 			return fmt.Errorf("decode the server config: %w", err)
 		}
-		if raw, err = io.ReadAll(io.LimitReader(zr, maxServerConfigBytes)); err != nil {
+		if raw, err = io.ReadAll(io.LimitReader(zr, maxServerConfigBytes+1)); err != nil {
 			return fmt.Errorf("decode the server config: %w", err)
+		}
+		if len(raw) > maxServerConfigBytes {
+			return errors.New("the server config is too large")
 		}
 	default:
 		return fmt.Errorf("the server config uses the %q encoding", enc)
