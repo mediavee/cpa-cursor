@@ -60,9 +60,30 @@ func TestToolChoiceNone(t *testing.T) {
 	if len(run.Request.GetMcpTools().GetMcpTools()) != 1 {
 		t.Error(`tool_choice "auto" must keep the tools`)
 	}
+	run = translateOK(t, `{"model":"composer-2.5","messages":[{"role":"user","content":"hi"}],`+tools+`,"tool_choice":null}`)
+	if len(run.Request.GetMcpTools().GetMcpTools()) != 1 {
+		t.Error("a null tool_choice is the omitted default and must keep the tools")
+	}
 	run = translateOK(t, `{"model":"composer-2.5","messages":[{"role":"user","content":"hi"}]}`)
 	if run.Request.GetMcpTools() != nil {
 		t.Error("a request without tools must not carry an mcp_tools message")
+	}
+}
+
+func TestToolChoiceOtherThanAutoOrNoneIsRejected(t *testing.T) {
+	tools := `"tools":[{"type":"function","function":{"name":"f"}}]`
+	for _, choice := range []string{
+		`"required"`,
+		`{"type":"function","function":{"name":"f"}}`,
+		`"none "`,
+	} {
+		t.Run(choice, func(t *testing.T) {
+			req := decode(t, `{"model":"composer-2.5","messages":[{"role":"user","content":"hi"}],`+tools+`,"tool_choice":`+choice+`}`)
+			_, err := translate.Translate(req, translate.Options{Catalog: plainCatalog})
+			if err == nil || !strings.Contains(err.Error(), "not supported") || !strings.Contains(err.Error(), "auto") || !strings.Contains(err.Error(), "none") {
+				t.Errorf("error = %v, want a refusal that says only auto and none are accepted", err)
+			}
+		})
 	}
 }
 

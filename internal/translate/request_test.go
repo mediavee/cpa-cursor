@@ -335,6 +335,85 @@ func TestTranslateImages(t *testing.T) {
 	}
 }
 
+func TestToolResultImageReachesResumeAndReplay(t *testing.T) {
+	png := []byte("\x89PNG shot")
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	imagePart := `{"type":"image_url","image_url":{"url":"` + dataURL + `"}}`
+	call := `{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"shot","arguments":"{}"}}]}`
+
+	t.Run("resume and replay of an image-only result", func(t *testing.T) {
+		run := translateOK(t, `{"model":"composer-2.5","messages":[
+			{"role":"user","content":"look"},
+			`+call+`,
+			{"role":"tool","tool_call_id":"c1","content":[`+imagePart+`]}]}`)
+		if len(run.Resolves) != 1 {
+			t.Fatalf("resolves = %d, want the tool result", len(run.Resolves))
+		}
+		items := run.Resolves[0].Result.GetSuccess().GetContent()
+		if len(items) != 1 || items[0].GetImage().GetMimeType() != "image/png" || string(items[0].GetImage().GetData()) != string(png) {
+			t.Fatalf("resume content = %v, want the png and no empty text", items)
+		}
+		wantBlob := `{"role":"tool","content":[{"type":"tool-result","toolCallId":"c1","toolName":"CallDynamicTool","result":"","experimental_content":[{"type":"image","image":"` + dataURL + `","mediaType":"image/png"}]}],"id":"c1"}`
+		if got := root(t, run); len(got) != 3 || got[2] != wantBlob {
+			t.Errorf("replay root\n got: %q\nwant last: %q", got, wantBlob)
+		}
+		turns := run.Request.ConversationState.Turns
+		if len(turns) != 1 {
+			t.Fatalf("turns = %d, want 1", len(turns))
+		}
+		var turn agentv1.ConversationTurnStructure
+		if err := proto.Unmarshal(blob(t, run, turns[0]), &turn); err != nil {
+			t.Fatal(err)
+		}
+		steps := turn.GetAgentConversationTurn().GetSteps()
+		if len(steps) != 1 {
+			t.Fatalf("steps = %d, want the tool call", len(steps))
+		}
+		var step agentv1.ConversationStep
+		if err := proto.Unmarshal(blob(t, run, steps[0]), &step); err != nil {
+			t.Fatal(err)
+		}
+		stepItems := step.GetToolCall().GetMcpToolCall().GetResult().GetSuccess().GetContent()
+		if len(stepItems) != 1 || stepItems[0].GetImage().GetMimeType() != "image/png" || string(stepItems[0].GetImage().GetData()) != string(png) {
+			t.Errorf("replay step content = %v, want the png", stepItems)
+		}
+	})
+
+	t.Run("replay keeps text and image order when a user message follows", func(t *testing.T) {
+		run := translateOK(t, `{"model":"composer-2.5","messages":[
+			{"role":"user","content":"look"},
+			`+call+`,
+			{"role":"tool","tool_call_id":"c1","content":[
+				{"type":"text","text":"before"},`+imagePart+`,{"type":"text","text":"after"}]},
+			{"role":"user","content":"what is it?"}]}`)
+		want := `{"role":"tool","content":[{"type":"tool-result","toolCallId":"c1","toolName":"CallDynamicTool","result":"before\nafter","experimental_content":[` +
+			`{"type":"text","text":"before"},{"type":"image","image":"` + dataURL + `","mediaType":"image/png"},{"type":"text","text":"after"}]}],"id":"c1"}`
+		if got := root(t, run); len(got) != 3 || got[2] != want {
+			t.Errorf("history tool blob\n got: %q\nwant last: %q", got, want)
+		}
+		if len(run.Resolves) != 0 || len(run.Request.ConversationState.Turns) != 0 {
+			t.Errorf("a following user message is a new turn, resolves=%d turns=%d", len(run.Resolves), len(run.Request.ConversationState.Turns))
+		}
+	})
+
+	t.Run("a tool image is refused the same way as a user image", func(t *testing.T) {
+		remote := `{"model":"composer-2.5","messages":[
+			{"role":"user","content":"look"},
+			` + call + `,
+			{"role":"tool","tool_call_id":"c1","content":[{"type":"image_url","image_url":{"url":"https://example.test/shot.png"}}]}]}`
+		if _, err := translate.Translate(decode(t, remote), translate.Options{Catalog: plainCatalog}); err == nil || !strings.Contains(err.Error(), "no resolver") {
+			t.Fatalf("an http tool image without a resolver must fail, got %v", err)
+		}
+		bad := `{"model":"composer-2.5","messages":[
+			{"role":"user","content":"look"},
+			` + call + `,
+			{"role":"tool","tool_call_id":"c1","content":[{"type":"image_url","image_url":{"url":"data:text/plain;base64,YQ=="}}]}]}`
+		if _, err := translate.Translate(decode(t, bad), translate.Options{Catalog: plainCatalog}); err == nil || !strings.Contains(err.Error(), "image data URL") {
+			t.Fatalf("a non-image data URL must fail, got %v", err)
+		}
+	})
+}
+
 func TestTranslateKeepsPartOrder(t *testing.T) {
 	a := base64.StdEncoding.EncodeToString([]byte("A"))
 	b := base64.StdEncoding.EncodeToString([]byte("B"))

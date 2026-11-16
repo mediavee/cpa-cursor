@@ -44,6 +44,9 @@ import (
 //	   "result":"Sunny, 21C","experimental_content":[{"type":"text","text":"Sunny, 21C"}]}],
 //	 "id":"tool_0c59615a-..."}
 //
+// A tool-result image is an experimental_content part in the same data-URL shape as a user image,
+// and an McpImageContent on the turn step (replay) and on the resume result.
+//
 // (the server adds redacted-reasoning parts, an "id" on assistant blobs and providerOptions, which a
 // client cannot reproduce and the model does not need). Checked against the live service (one tool call, and
 // two parallel ones): a second request holding only the client's messages, with the call and the
@@ -78,11 +81,11 @@ type dynamicArgs struct {
 }
 
 type toolResultPart struct {
-	Type    string     `json:"type"`
-	CallID  string     `json:"toolCallId"`
-	Name    string     `json:"toolName"`
-	Result  string     `json:"result"`
-	Content []textPart `json:"experimental_content"`
+	Type    string `json:"type"`
+	CallID  string `json:"toolCallId"`
+	Name    string `json:"toolName"`
+	Result  string `json:"result"`
+	Content []any  `json:"experimental_content"`
 }
 
 type rootMessage struct {
@@ -134,8 +137,8 @@ func (c *conversation) rootEntries(blobs *blobSet) ([][]byte, error) {
 			m = rootMessage{Role: "assistant", Content: parts}
 		case itemToolResult:
 			m = rootMessage{Role: "tool", ID: it.callID, Content: []toolResultPart{{
-				Type: "tool-result", CallID: it.callID, Name: dynamicTool, Result: it.result,
-				Content: []textPart{{Type: "text", Text: it.result}},
+				Type: "tool-result", CallID: it.callID, Name: dynamicTool, Result: it.result.text(),
+				Content: experimentalContent(it.result),
 			}}}
 		}
 		if err := add(m); err != nil {
@@ -147,6 +150,15 @@ func (c *conversation) rootEntries(blobs *blobSet) ([][]byte, error) {
 
 func rulesEntry(system []string) string {
 	return "<rules>\n" + strings.Join(system, "\n\n") + "\n</rules>"
+}
+
+// experimentalContent is the tool-result content list. A text-only result stays one joined text
+// part, which is the shape captured from a live run; images keep the part order, like a user message.
+func experimentalContent(u userMessage) []any {
+	if len(u.images()) == 0 {
+		return []any{textPart{Type: "text", Text: u.text()}}
+	}
+	return userParts(u)
 }
 
 func userParts(u userMessage) []any {
@@ -177,7 +189,7 @@ func userParts(u userMessage) []any {
 
 // turnEntries builds the turn blobs for the whole history.
 func (c *conversation) turnEntries(blobs *blobSet) ([][]byte, error) {
-	results := map[string]string{}
+	results := map[string]userMessage{}
 	for _, it := range c.history {
 		if it.kind == itemToolResult {
 			results[it.callID] = it.result
@@ -249,7 +261,7 @@ func (c *conversation) turnEntries(blobs *blobSet) ([][]byte, error) {
 	return turns, nil
 }
 
-func toolCallStep(tc toolCall, result string) (*agentv1.ConversationStep, error) {
+func toolCallStep(tc toolCall, result userMessage) (*agentv1.ConversationStep, error) {
 	var obj map[string]any
 	if err := json.Unmarshal(tc.args, &obj); err != nil {
 		return nil, err
@@ -269,7 +281,7 @@ func toolCallStep(tc toolCall, result string) (*agentv1.ConversationStep, error)
 				Name: providerIdentifier + "-" + tc.name, Args: args, ToolCallId: tc.id,
 				ProviderIdentifier: providerIdentifier, ToolName: tc.name,
 			},
-			Result: &agentv1.McpToolResult{Result: &agentv1.McpToolResult_Success{Success: textSuccess(result)}},
+			Result: &agentv1.McpToolResult{Result: &agentv1.McpToolResult_Success{Success: mcpSuccess(result)}},
 		}},
 	}}}, nil
 }
@@ -278,6 +290,27 @@ func textSuccess(text string) *agentv1.McpSuccess {
 	return &agentv1.McpSuccess{Content: []*agentv1.McpToolResultContentItem{{
 		Content: &agentv1.McpToolResultContentItem_Text{Text: &agentv1.McpTextContent{Text: text}},
 	}}}
+}
+
+// mcpSuccess is the tool result the model sees. Text-only stays one text item; images are
+// McpImageContent in the client's order, with no empty text standing in for an image.
+func mcpSuccess(u userMessage) *agentv1.McpSuccess {
+	if len(u.images()) == 0 {
+		return textSuccess(u.text())
+	}
+	content := make([]*agentv1.McpToolResultContentItem, 0, len(u.parts))
+	for _, p := range u.parts {
+		if p.image == nil {
+			content = append(content, &agentv1.McpToolResultContentItem{Content: &agentv1.McpToolResultContentItem_Text{
+				Text: &agentv1.McpTextContent{Text: p.text},
+			}})
+			continue
+		}
+		content = append(content, &agentv1.McpToolResultContentItem{Content: &agentv1.McpToolResultContentItem_Image{
+			Image: &agentv1.McpImageContent{Data: p.image.data, MimeType: p.image.mime},
+		}})
+	}
+	return &agentv1.McpSuccess{Content: content}
 }
 
 // newUserMessage builds the UserMessage of the action or of a turn. The id is derived from the

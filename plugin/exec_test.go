@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
+	agentv1 "github.com/mediavee/cpa-cursor/internal/gen/agent/v1"
 	aiserverv1 "github.com/mediavee/cpa-cursor/internal/gen/aiserver/v1"
 	"github.com/mediavee/cpa-cursor/internal/translate"
 )
@@ -273,6 +275,64 @@ func TestIdleStreamNoticesThatTheClientLeft(t *testing.T) {
 	case <-run.gone:
 	case <-time.After(waitTimeout):
 		t.Fatal("an idle stream never noticed that CPA closed it")
+	}
+}
+
+func TestToolChoiceOtherThanAutoOrNoneIsRejected(t *testing.T) {
+	h := newHarness(t)
+	token := h.token(time.Hour, "s")
+	for _, choice := range []any{"required", map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}} {
+		body := chatBody("composer-x", userMsg("hi"))
+		body["tools"] = []any{weatherTool}
+		body["tool_choice"] = choice
+		_, e := h.execute("auth-1", token, "composer-x", body)
+		if e == nil || e.HTTPStatus != 400 || !strings.Contains(e.Message, "not supported") || !strings.Contains(e.Message, "auto") || !strings.Contains(e.Message, "none") {
+			t.Fatalf("tool_choice %v: error = %+v, want 400 that says only auto and none are accepted", choice, e)
+		}
+	}
+	if h.up.runCount() != 0 {
+		t.Errorf("runs = %d, a refused tool_choice must not open a Cursor run", h.up.runCount())
+	}
+}
+
+func TestToolResultImageReachesTheParkedRun(t *testing.T) {
+	png := []byte{0x89, 'P', 'N', 'G'}
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	h := newHarness(t)
+	got := make(chan *agentv1.McpSuccess, 1)
+	h.up.setScript(func(r *fakeRun) {
+		r.toolCall(1, "call_1", "get_weather", "x")
+		got <- r.waitMcpSuccess()
+		r.text("seen")
+		r.turnEnded(4, 1)
+	})
+	token := h.token(time.Hour, "s")
+	body1 := chatBody("composer-x", userMsg("look"))
+	body1["tools"] = []any{weatherTool}
+	resp1, e := h.execute("auth-1", token, "composer-x", body1)
+	if e != nil {
+		t.Fatalf("request 1: %+v", e)
+	}
+	calls := resp1.Choices[0].Message.ToolCalls
+	if len(calls) != 1 || calls[0].ID != "call_1" {
+		t.Fatalf("response 1 tool calls = %+v", calls)
+	}
+	body2 := chatBody("composer-x", userMsg("look"),
+		map[string]any{"role": "assistant", "content": nil, "tool_calls": calls},
+		map[string]any{"role": "tool", "tool_call_id": calls[0].ID, "content": []any{
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": dataURL}},
+		}})
+	body2["tools"] = []any{weatherTool}
+	if _, e := h.execute("auth-1", token, "composer-x", body2); e != nil {
+		t.Fatalf("request 2: %+v", e)
+	}
+	success := <-got
+	items := success.GetContent()
+	if len(items) != 1 || items[0].GetImage().GetMimeType() != "image/png" || string(items[0].GetImage().GetData()) != string(png) {
+		t.Fatalf("parked run content = %v, want the png and no empty text", items)
+	}
+	if h.up.runCount() != 1 {
+		t.Errorf("runs = %d, the image must resume the parked run", h.up.runCount())
 	}
 }
 

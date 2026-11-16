@@ -113,7 +113,8 @@ cycle.
   endpoint.
 - **Cancellation** stops the Cursor run for a stream; CPA gives plugins no cancel signal for a non-streaming
   request, which runs to its end.
-- **Images** are accepted as `data:` URLs only; a remote URL is answered `400`.
+- **Images** are accepted as `data:` URLs only, on a user message or a tool result; a remote URL is answered `400`.
+- **`tool_choice` is only `auto` or `none`.** The agent protocol cannot force a tool, so any other value, including `required` and a named tool, is answered `400`. The model list does not advertise `tool_choice`.
 - **Network.** The plugin calls Cursor itself, over HTTP/2 from the CPA process, and honours its
   `HTTP_PROXY`/`HTTPS_PROXY`, not a credential's `proxy_url`.
 
