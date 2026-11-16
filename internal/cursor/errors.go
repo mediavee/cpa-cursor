@@ -79,14 +79,15 @@ func (e *Error) Error() string {
 	return b.String()
 }
 
-// ClassOf classifies any error returned by this package. Transport failures
-// and stalls are retryable; cancellations and unknown errors have no class.
+// ClassOf classifies any error returned by this package. Transport failures,
+// a stream cut on a frame boundary and stalls are retryable; cancellations
+// and unknown errors have no class.
 func ClassOf(err error) ErrorClass {
 	var ce *Error
 	switch {
 	case errors.As(err, &ce):
 		return ce.Class
-	case errors.Is(err, ErrStalled), errors.Is(err, io.ErrUnexpectedEOF):
+	case errors.Is(err, ErrStalled), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, ErrTruncated):
 		return ClassRetryable
 	case errors.Is(err, context.Canceled), errors.Is(err, ErrClosed):
 		return ""

@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -60,6 +61,21 @@ func toolDefinitions(tools []Tool) ([]*agentv1.McpToolDefinition, error) {
 		})
 	}
 	return defs, nil
+}
+
+// rejectedToolChoice refuses a tool_choice the agent protocol cannot carry. AgentRunRequest has no
+// field that forces a tool, and a Cursor rule would only ask the model, which can still answer in
+// prose. Omitted and null mean auto. "none" drops the tools.
+func rejectedToolChoice(choice json.RawMessage) error {
+	trimmed := bytes.TrimSpace(choice)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(trimmed, &s); err == nil && (s == "auto" || s == "none") {
+		return nil
+	}
+	return fmt.Errorf("tool_choice %s is not supported: the agent protocol cannot force a tool, only \"auto\" and \"none\" are accepted", trimmed)
 }
 
 // toolsDisabled reports whether tool_choice is "none": the protocol has no such field, so the

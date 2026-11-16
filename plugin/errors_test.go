@@ -82,6 +82,15 @@ func TestUsageLimitWithoutAnyResetLeavesTheBackoffToCPA(t *testing.T) {
 	}
 }
 
+func TestTruncatedStreamIsRetryable(t *testing.T) {
+	h := newHarness(t)
+	h.up.setScript(func(r *fakeRun) { r.cut() })
+	_, e := h.execute("auth-1", h.token(time.Hour, "s"), "composer-x", chatBody("composer-x", userMsg("hi")))
+	if e == nil || e.HTTPStatus != 503 || e.Code != "upstream_unreachable" {
+		t.Fatalf("error = %+v, want 503 upstream_unreachable, the same answer as an unexpected EOF", e)
+	}
+}
+
 func TestTransportFailureIsRetryable(t *testing.T) {
 	h := newHarness(t)
 	h.up.setScript(func(r *fakeRun) { r.endError(`{"error":{"code":"unavailable","message":"overloaded"}}`) })

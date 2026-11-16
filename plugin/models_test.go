@@ -45,6 +45,14 @@ func TestModelsForAuthListsTheAccountSlugs(t *testing.T) {
 	if slices.Contains(byID["composer-x"].SupportedInputModalities, "image") || slices.Contains(byID["composer-x"].SupportedParameters, "reasoning_effort") {
 		t.Errorf("composer-x must not claim images or effort: %+v", byID["composer-x"])
 	}
+	for _, m := range out.Models {
+		if slices.Contains(m.SupportedParameters, "tool_choice") {
+			t.Errorf("%s advertises tool_choice, which the agent protocol cannot honour: %v", m.ID, m.SupportedParameters)
+		}
+		if !slices.Contains(m.SupportedParameters, "tools") {
+			t.Errorf("%s must still advertise tools: %v", m.ID, m.SupportedParameters)
+		}
+	}
 }
 
 func TestCatalogHoldsWhatTranslateNeeds(t *testing.T) {

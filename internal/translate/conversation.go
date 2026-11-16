@@ -78,7 +78,7 @@ type item struct {
 	text   string      // itemAssistant
 	calls  []toolCall  // itemAssistant
 	callID string      // itemToolResult, wire id
-	result string      // itemToolResult
+	result userMessage // itemToolResult, parts in the order the client sent them
 }
 
 // conversation is a request split into what goes to the blobs and what goes to the action.
@@ -94,7 +94,7 @@ type conversation struct {
 
 type trailingResult struct {
 	callID string // as the client sent it
-	text   string
+	result userMessage
 }
 
 func parseConversation(messages []Message, resolve ImageResolver) (*conversation, error) {
@@ -151,7 +151,11 @@ func parseConversation(messages []Message, resolve ImageResolver) (*conversation
 				return nil, fmt.Errorf("messages[%d]: tool result for unknown or already answered call %q", i, m.ToolCallID)
 			}
 			delete(pending, m.ToolCallID)
-			c.history = append(c.history, item{kind: itemToolResult, callID: wire[m.ToolCallID], result: textOf(m.Content)})
+			body, err := parseUser(m.Content, resolve)
+			if err != nil {
+				return nil, fmt.Errorf("messages[%d]: %w", i, err)
+			}
+			c.history = append(c.history, item{kind: itemToolResult, callID: wire[m.ToolCallID], result: body})
 		default:
 			return nil, fmt.Errorf("messages[%d]: unsupported role %q", i, m.Role)
 		}
@@ -178,7 +182,7 @@ func parseConversation(messages []Message, resolve ImageResolver) (*conversation
 			start--
 		}
 		for _, it := range c.history[start:] {
-			c.resolves = append(c.resolves, trailingResult{callID: clientID[it.callID], text: it.result})
+			c.resolves = append(c.resolves, trailingResult{callID: clientID[it.callID], result: it.result})
 		}
 	default:
 		return nil, ErrNoActiveMessage

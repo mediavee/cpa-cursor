@@ -68,7 +68,7 @@ func buildCatalog(usable []*agentv1.ModelDetails, avail *cursor.AvailableModels,
 		info := pluginapi.ModelInfo{
 			ID: slug, Object: "model", Created: now.Unix(), OwnedBy: ID, Type: ID,
 			DisplayName: firstNonEmpty(d.GetDisplayName(), slug), Name: slug,
-			SupportedParameters:       []string{"tools", "tool_choice"},
+			SupportedParameters:       []string{"tools"},
 			SupportedInputModalities:  []string{"text"},
 			SupportedOutputModalities: []string{"text"},
 		}

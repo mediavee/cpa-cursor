@@ -47,6 +47,9 @@ func Translate(req *ChatRequest, opts Options) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectedToolChoice(req.ToolChoice); err != nil {
+		return nil, err
+	}
 	model, err := resolveModel(opts.Catalog, req.Model, req.ReasoningEffort)
 	if err != nil {
 		return nil, err
@@ -103,7 +106,7 @@ func Translate(req *ChatRequest, opts Options) (*Run, error) {
 	for _, r := range conv.resolves {
 		run.Resolves = append(run.Resolves, ToolResult{
 			CallID: r.callID,
-			Result: &agentv1.McpResult{Result: &agentv1.McpResult_Success{Success: textSuccess(r.text)}},
+			Result: &agentv1.McpResult{Result: &agentv1.McpResult_Success{Success: mcpSuccess(r.result)}},
 		})
 	}
 	run.Blobs = blobs.blobs

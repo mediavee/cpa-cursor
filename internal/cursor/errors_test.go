@@ -153,6 +153,9 @@ func TestClassOfTransportAndCancellation(t *testing.T) {
 	if ClassOf(fmt.Errorf("wrap: %w", &Error{Class: ClassBlocked})) != ClassBlocked {
 		t.Error("ClassOf does not unwrap")
 	}
+	if ClassOf(ErrTruncated) != ClassRetryable || ClassOf(fmt.Errorf("wrap: %w", ErrTruncated)) != ClassRetryable {
+		t.Errorf("ClassOf(ErrTruncated) = %q, want retryable like an unexpected EOF", ClassOf(ErrTruncated))
+	}
 }
 
 func TestErrorOnTheWireIsDecodedByTheSession(t *testing.T) {

@@ -171,6 +171,8 @@ type fakeRun struct {
 	in      chan *agentv1.AgentClientMessage
 	wmu     sync.Mutex
 	gone    chan struct{}
+	// cutBody ends the response without an end-of-stream frame.
+	cutBody bool
 }
 
 func (f *fakeCursor) serveRun(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +222,9 @@ func (f *fakeCursor) serveRun(w http.ResponseWriter, r *http.Request) {
 		script = func(r *fakeRun) { r.text("ok"); r.turnEnded(3, 2) }
 	}
 	script(run)
-	run.frame(0x02, []byte(`{}`))
+	if !run.cutBody {
+		run.frame(0x02, []byte(`{}`))
+	}
 }
 
 func (r *fakeRun) frame(flags byte, payload []byte) {
@@ -298,6 +302,22 @@ func (r *fakeRun) waitMcpResult() (callExecID, text string) {
 }
 
 func (r *fakeRun) endError(js string) { r.frame(0x02, []byte(js)) }
+
+// cut ends the response on a frame boundary, with no end-of-stream frame and no turn_ended.
+func (r *fakeRun) cut() { r.cutBody = true }
+
+// waitMcpSuccess returns the next tool result the client sends.
+func (r *fakeRun) waitMcpSuccess() *agentv1.McpSuccess {
+	for {
+		m := r.recv()
+		if m == nil {
+			return nil
+		}
+		if ex := m.GetExecClientMessage(); ex != nil && ex.GetMcpResult() != nil {
+			return ex.GetMcpResult().GetSuccess()
+		}
+	}
+}
 
 // connectError is the end-of-stream JSON of a failed run.
 func connectError(t *testing.T, code, message string, det *aiserverv1.ErrorDetails) string {
